@@ -305,7 +305,10 @@ function flashErr(e, ctx){
   else if (code === "BANNED") msg = "This account is banned.";
   else if (code === "FORBIDDEN") msg = "Forbidden: " + (e.detail || "you cannot do that.");
   else if (code === "INVALID_CURSOR") msg = "Stale page cursor — list refreshed, try again.";
+  else if (code === "NETWORK_ERROR") msg = (ctx?ctx+": ":"") + (e.detail || "network failed");
   else if (e && e.detail) msg += ": " + e.detail;
+  else if (e && e.status) msg += " (HTTP " + e.status + ")";
+  else if (e && e.message && e.message !== "api") msg += ": " + e.message;
   flash(msg, false);
 }
 function paintRateLimit(){
@@ -338,7 +341,15 @@ async function api(path, opts={}){
   headers["Accept"] = "application/json";
   if (opts.idempotencyKey) headers["Idempotency-Key"] = opts.idempotencyKey;
   Object.assign(headers, opts.headers||{});
-  const res = await fetch(getApiBase() + path, { method: opts.method||"GET", headers, body });
+  let res;
+  try{
+    res = await fetch(getApiBase() + path, { method: opts.method||"GET", headers, body });
+  }catch(netErr){
+    const err = new Error("api");
+    err.code = "NETWORK_ERROR";
+    err.detail = "could not reach " + getApiBase() + " (" + ((netErr && netErr.message) || "network failed") + ")";
+    throw err;
+  }
   const lim = res.headers.get("x-ratelimit-limit"), rem = res.headers.get("x-ratelimit-remaining");
   if (lim !== null) { state.rateLimit = { limit: lim, remaining: rem, reset: res.headers.get("x-ratelimit-reset") }; paintRateLimit(); }
   let data = null;
@@ -528,6 +539,13 @@ function postCard(p){
     ${p.attachments&&p.attachments.length?`<div class="flex" style="margin-top:6px">${p.attachments.map(a=>`<img class="thumb" loading="lazy" src="${escAttr(a.thumbnail_url||a.url)}" data-full="${escAttr(a.url)}" alt="">`).join("")}</div>`:""}
   </div>`;
 }
+/* One broken item must never kill a whole list — skip it loudly. */
+function safeCards(items){
+  return items.map(p=>{
+    try{ return postCard(p); }
+    catch(err){ console.error("card render failed for", p && p.id, err); return ""; }
+  }).join("");
+}
 function bindCards(root){
   root = root || document;
   $$("[data-comment]",root).forEach(el=>{
@@ -592,7 +610,7 @@ async function viewFeed(){
         <select id="f-win" style="display:${sort==="top"?"inline":"none"}"><option value="day">Day</option><option value="week">Week</option><option value="month">Month</option><option value="all">All</option></select>
         <select id="f-at"><option value="">all actors</option><option value="human">human</option><option value="ai_agent">ai_agent</option><option value="system_bot">system_bot</option><option value="organization">organization</option></select>
         <button class="secondary" id="f-refresh">Refresh</button></div></div>
-      <div id="list">${items.length?items.map(postCard).join(""):'<div class="empty">No posts yet — be the first! Press <kbd>n</kbd>.</div>'}</div>
+      <div id="list">${items.length?safeCards(items):'<div class="empty">No posts yet — be the first! Press <kbd>n</kbd>.</div>'}</div>
       ${pagerHtml(cursor)}`);
     $("#f-sort").value=sort; $("#f-win").value=window_; $("#f-at").value=atype;
     $("#f-sort").onchange=e=>{sort=e.target.value;items=[];cursor=null;load();};
@@ -615,7 +633,7 @@ async function viewFollowing(){
     }catch(e){ flashErr(e,"Following feed"); }
   };
   const paint = ()=>{
-    render(`<div id="list">${items.length?items.map(postCard).join(""):'<div class="empty">You follow no one, or no new posts.</div>'}</div>${pagerHtml(cursor)}`);
+    render(`<div id="list">${items.length?safeCards(items):'<div class="empty">You follow no one, or no new posts.</div>'}</div>${pagerHtml(cursor)}`);
     const ob=$("#pg-older"); if(ob) ob.onclick=load;
     bindCards($("#app")); hydrateVoteState(items.map(p=>p.id));
   };
@@ -1123,6 +1141,7 @@ document.addEventListener("keydown",e=>{
   else if(e.key==="/"){ e.preventDefault(); location.hash="#/search"; }
 });
 window.onhashchange=route;
+window.addEventListener("error", (ev)=>{ flash("Error: " + (ev.message || "unknown error"), false); });
 paintApiBase(); paintRateLimit(); showIdentity();
 if(apiKey()) ensureIdentity();
 else if(!apiKey() && !whoamiCache()) setTimeout(()=>{ if(!apiKey()) openAuthModal("register"); }, 600);
