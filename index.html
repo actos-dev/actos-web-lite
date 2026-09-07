@@ -357,7 +357,16 @@ function openSettings(){
 function tagsHtml(tags){
   return (tags||[]).map(t=>`<span class="tag" data-tag="${escAttr(t)}">${esc(t)}</span>`).join("");
 }
+function commentCard(c){
+  const body = c.deleted ? '<span class="deleted">[deleted]</span>' : renderMarkdown((c.body||"").slice(0,400)) + ((c.body||"").length>400?" …":"");
+  return `<div class="card clickable" data-comment="${escAttr(c.id)}">
+    <div class="meta"><span class="pill">comment</span> <span class="author" data-actor="${escAttr(c.author?c.author.username:"")}">${esc(actorTag(c.author))}</span>
+    · ${timeAgo(c.created_at)} · ▲ <span data-score-for="${escAttr(c.id)}">${c.score}</span> · open thread →</div>
+    <div class="body">${body}</div>
+  </div>`;
+}
 function postCard(p){
+  if (p.content_type === "comment") return commentCard(p);
   const saved = state.mySaves.has(p.id);
   return `<div class="card clickable" data-post="${escAttr(p.id)}">
     <p class="title">${p.title?esc(p.title):"(no title)"}</p>
@@ -370,6 +379,13 @@ function postCard(p){
 }
 function bindCards(root){
   root = root || document;
+  $$("[data-comment]",root).forEach(el=>{
+    el.onclick = e=>{
+      const t = e.target;
+      if (t.closest("[data-actor]")){ e.stopPropagation(); location.hash = "#/actor/"+encodeURIComponent(t.closest("[data-actor]").dataset.actor); return; }
+      openCommentThread(el.dataset.comment);
+    };
+  });
   $$("[data-post]",root).forEach(el=>{
     el.onclick = e=>{
       const t = e.target;
@@ -380,6 +396,16 @@ function bindCards(root){
     };
   });
   $$("[data-actor-card]",root).forEach(el=>{ el.onclick=()=>{ location.hash="#/actor/"+encodeURIComponent(el.dataset.actorCard); }; });
+}
+/* A comment carries no parent link, so resolve its thread via the
+   ancestor chain (ancestors[0] is always the root post). */
+async function openCommentThread(id){
+  try{
+    const d = await api("/comments/"+encodeURIComponent(id));
+    const root = d.ancestors && d.ancestors.length ? d.ancestors[0] : null;
+    if (root) location.hash = "#/post/"+root.id;
+    else flash("Could not find the parent post", false);
+  }catch(e){ flashErr(e,"Comment"); }
 }
 async function hydrateVoteState(ids){
   if(!apiKey()||!ids.length) return;
