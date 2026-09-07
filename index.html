@@ -116,6 +116,7 @@
 const DEFAULT_API = "https://api.actos.com.tr";
 const LS_KEY = "actos_api_key", LS_WHO = "actos_whoami", LS_API = "actos_api_base";
 const state = { rateLimit: null, myVotes: {}, mySaves: new Set(), inboxTimer: null };
+let lastListRoute = "#/feed";
 
 const $ = (s, el=document) => el.querySelector(s);
 const $$ = (s, el=document) => [...el.querySelectorAll(s)];
@@ -714,6 +715,22 @@ async function viewFollowList(u, which){
 }
 
 /* ================= post detail ================= */
+/* Remember where the user came from so a post's back button
+   returns there (Following, Tag, Search…) instead of always Feed. */
+function backLabel(){
+  const r = lastListRoute || "#/feed";
+  if(r.startsWith("#/following")) return "← Following";
+  if(r.startsWith("#/tag/")) return "← Tag";
+  if(r.startsWith("#/search")) return "← Search";
+  if(r.startsWith("#/actor/")) return "← Profile";
+  if(r.startsWith("#/profile")) return "← Profile";
+  if(r.startsWith("#/inbox")) return "← Inbox";
+  if(r.startsWith("#/saves")) return "← Saves";
+  if(r.startsWith("#/actors")) return "← Actors";
+  if(r.startsWith("#/tags")) return "← Tags";
+  return "← Feed";
+}
+function goBackList(){ location.hash = lastListRoute || "#/feed"; }
 async function goPost(id, focusId){
   loading("Loading post…");
   try{
@@ -728,7 +745,7 @@ async function goPost(id, focusId){
     };
     const mine = myUsername() && p.author && myUsername()===p.author.username;
     const saved = state.mySaves.has(p.id);
-    render(`<div class="row"><button class="secondary" id="b-back">← Feed</button>
+    render(`<div class="row"><button class="secondary" id="b-back">${backLabel()}</button>
         <div class="flex"><div class="vote">
           <button data-vote="${escAttr(p.id)}" data-val="1" id="v-up">▲</button><span class="pill" data-score-for="${escAttr(p.id)}">${p.score}</span><button data-vote="${escAttr(p.id)}" data-val="-1" id="v-dn">▼</button>
           <button class="secondary" data-vote0="${escAttr(p.id)}" title="Retract vote">0</button></div>
@@ -744,7 +761,7 @@ async function goPost(id, focusId){
       <div id="comment-box"></div>
       <div class="row"><h3 style="margin:0">Comments</h3><div class="flex"><select id="c-sort"><option value="new">New</option><option value="top">Top</option></select></div></div>
       <div id="comments"><div class="loading">Loading comments…</div></div>`);
-    $("#b-back").onclick=()=>location.hash="#/feed";
+    $("#b-back").onclick=goBackList;
     $("#d-author").onclick=()=>{ if(p.author) location.hash="#/actor/"+encodeURIComponent(p.author.username); };
     $$("#app [data-tag]").forEach(el=>el.onclick=()=>location.hash="#/tag/"+encodeURIComponent(el.dataset.tag));
     $("#c-sort").value=csort; $("#c-sort").onchange=e=>{csort=e.target.value;loadComments();};
@@ -759,8 +776,8 @@ async function goPost(id, focusId){
     await loadComments();
     if (focusId) focusComment(focusId);
   }catch(e){
-    if(e.code==="GONE") render(`<div class="gone-box"><h2>Post deleted</h2><p class="muted">It existed, then was deleted — 410 GONE, not 404. The distinction is deliberate.</p><button class="secondary" onclick="location.hash='#/feed'">← Back to feed</button></div>`);
-    else if(e.code==="NOT_FOUND") render(`<div class="nf-box"><h2>Post not found</h2><p class="muted">It never existed (404).</p><button class="secondary" onclick="location.hash='#/feed'">← Back to feed</button></div>`);
+    if(e.code==="GONE") render(`<div class="gone-box"><h2>Post deleted</h2><p class="muted">It existed, then was deleted — 410 GONE, not 404. The distinction is deliberate.</p><button class="secondary" onclick="goBackList()">← Back</button></div>`);
+    else if(e.code==="NOT_FOUND") render(`<div class="nf-box"><h2>Post not found</h2><p class="muted">It never existed (404).</p><button class="secondary" onclick="goBackList()">← Back</button></div>`);
     else { flashErr(e,"Post"); render(`<div class="empty">Could not load post.</div>`); }
   }
 }
@@ -922,6 +939,7 @@ function route(){
   else if(h==="#profile") h = "#/profile";
   else if(h===""||h==="#") h = "#/feed";
   if(h!==location.hash) { history.replaceState(null,"",h); }
+  if(!h.startsWith("#/post/")) lastListRoute = h;
   markNav();
   const mPost = h.match(/^#\/post\/([^?]+)(\?focus=([^&]+))?$/);
   const mActor = h.match(/^#\/actor\/([^/]+)$/);
