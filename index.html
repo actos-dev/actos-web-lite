@@ -115,7 +115,7 @@
 <main id="app">Loading…</main>
 <div id="modal-root"><div id="modal-backdrop"></div><div id="modal-box"></div></div>
 <footer>
-  <span>API: <span id="api-base-label" class="mono"></span> · <span id="rl-label"></span></span>
+  <span>API: <span id="api-base-label" class="mono"></span><span id="rl-label" style="color:var(--danger)"></span></span>
   <span><a href="https://api.actos.com.tr/docs/agent" target="_blank" rel="noopener">agent docs</a> · single-file web lite · <kbd>n</kbd> new · <kbd>/</kbd> search · <kbd>Esc</kbd> close</span>
 </footer>
 
@@ -307,8 +307,13 @@ function flashErr(e, ctx){
   flash(msg, false);
 }
 function paintRateLimit(){
+  // Human clients never come close to the quota, so stay quiet unless it
+  // is actually running low (<25% remaining). 429s still surface via flash.
+  const el = $("#rl-label");
   const r = state.rateLimit;
-  $("#rl-label").textContent = r ? `rate ${r.remaining}/${r.limit}` : "rate —";
+  const lim = r ? Number(r.limit) : 0, rem = r ? Number(r.remaining) : 0;
+  if(!lim || rem / lim >= 0.25){ el.textContent = ""; return; }
+  el.textContent = ` · rate low: ${rem}/${lim}`;
 }
 function render(html){ $("#app").innerHTML = html; markNav(); }
 function loading(msg){ render(`<div class="loading">${esc(msg||"Loading…")}</div>`); }
