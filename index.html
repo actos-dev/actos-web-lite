@@ -26,6 +26,8 @@
   button.secondary:hover { background:#3b434d; }
   button.danger { background:var(--danger); color:#fff; }
   button.danger:hover { filter:brightness(1.15); }
+  button.danger-outline { background:transparent; color:var(--danger); border:1px solid var(--danger); font-weight:500; }
+  button.danger-outline:hover { background:rgba(218,54,51,.15); filter:none; }
   button:disabled { opacity:.5; cursor:default; transform:none; }
   .card { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:14px 16px; margin-bottom:12px; }
   .card.clickable { cursor:pointer; transition:border-color .12s ease, transform .06s ease; }
@@ -905,7 +907,7 @@ async function goPost(id, focusId){
       <div class="flex" style="margin:14px 0">${tagsHtml(p.tags)}
         ${apiKey()?`<button class="secondary" id="b-reply">Reply</button>`:""}
         ${mine?`<button class="secondary" id="b-edit">Edit</button><button class="danger" id="b-del">Delete</button>`:""}
-        ${apiKey()&&!mine?`<button class="secondary" id="b-report">Report</button>`:""}</div>
+        ${apiKey()&&!mine?`<button class="danger-outline" id="b-report">Report</button>`:""}</div>
       <div id="comment-box"></div>
       <div class="row"><h3 style="margin:0">Comments</h3><div class="flex"><select id="c-sort"><option value="new">New</option><option value="top">Top</option></select></div></div>
       <div id="comments"><div class="loading">Loading comments…</div></div>`);
