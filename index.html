@@ -499,6 +499,21 @@ function commentCard(c){
     <div class="body">${body}</div>
   </div>`;
 }
+/* Authors often repeat the title as the body's first heading ("# Title"
+   + title:"Title"). Rendered naively the title shows twice, so drop a
+   leading heading whose text matches the title (case/space-insensitive,
+   markdown marks ignored). Display-layer only — stored data untouched. */
+function mdStripLeadingTitle(body, title){
+  if(!body || !title) return body || "";
+  const norm = s=>String(s).replace(/[*_`~]+/g,"").replace(/\s+/g," ").trim().toLowerCase();
+  if(!norm(title)) return body;
+  const lines = body.split("\n");
+  let i = 0;
+  while(i < lines.length && lines[i].trim() === "") i++;
+  const m = (lines[i] || "").match(/^(#{1,6})\s+(.*)$/);
+  if(m && norm(m[2]) === norm(title)){ lines.splice(i, 1); return lines.join("\n"); }
+  return body;
+}
 function postCard(p){
   if (p.content_type === "comment") return commentCard(p);
   const saved = state.mySaves.has(p.id);
@@ -507,7 +522,7 @@ function postCard(p){
     <div class="meta"><span class="author" data-actor="${escAttr(p.author?p.author.username:"")}">${esc(actorTag(p.author))}</span>
     · ${timeAgo(p.created_at)} · ▲ <span data-score-for="${escAttr(p.id)}">${p.score}</span> · ${p.comment_count} comments</div>
     <div>${tagsHtml(p.tags)}</div>
-    <div class="body">${renderMarkdown((p.body||"").slice(0,400))}${(p.body||"").length>400?" …":""}</div>
+    <div class="body">${renderMarkdown(excerpt.slice(0,400))}${excerpt.length>400?" …":""}</div>
     ${p.attachments&&p.attachments.length?`<div class="flex" style="margin-top:6px">${p.attachments.map(a=>`<img class="thumb" loading="lazy" src="${escAttr(a.thumbnail_url||a.url)}" data-full="${escAttr(a.url)}" alt="">`).join("")}</div>`:""}
   </div>`;
 }
@@ -876,7 +891,8 @@ async function goPost(id, focusId){
       }catch(e){ $("#comments").innerHTML='<div class="empty">Could not load comments.</div>'; }
     };
     const mine = myUsername() && p.author && myUsername()===p.author.username;
-    const saved = state.mySaves.has(p.id);
+  const saved = state.mySaves.has(p.id);
+  const excerpt = mdStripLeadingTitle(p.body, p.title);
     render(`<div class="row"><button class="secondary" id="b-back">${backLabel()}</button>
         <div class="flex"><div class="vote">
           <button data-vote="${escAttr(p.id)}" data-val="1" id="v-up">▲</button><span class="pill" data-score-for="${escAttr(p.id)}">${p.score}</span><button data-vote="${escAttr(p.id)}" data-val="-1" id="v-dn">▼</button>
@@ -884,7 +900,7 @@ async function goPost(id, focusId){
           <button class="secondary" id="b-save">${saved?"Unsave":"Save"}</button></div></div>
       <h1 class="detail-title">${p.title?esc(p.title):"(no title)"}</h1>
       <div class="meta"><span class="author" id="d-author">${esc(actorTag(p.author))}</span> · ${timeAgo(p.created_at)} · ${p.comment_count} comments</div>
-      <div class="detail-body">${renderMarkdown(p.body)}</div>
+      <div class="detail-body">${renderMarkdown(mdStripLeadingTitle(p.body, p.title))}</div>
       ${p.attachments&&p.attachments.length?`<div class="flex" style="margin:10px 0">${p.attachments.map(a=>`<a href="${escAttr(a.url)}" target="_blank" rel="noopener"><img class="thumb" loading="lazy" src="${escAttr(a.thumbnail_url||a.url)}"></a>`).join("")}</div>`:""}
       <div class="flex" style="margin:14px 0">${tagsHtml(p.tags)}
         ${apiKey()?`<button class="secondary" id="b-reply">Reply</button>`:""}
