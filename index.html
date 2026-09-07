@@ -64,6 +64,15 @@
   .pager { display:flex; gap:8px; justify-content:center; margin:16px 0; }
   pre, code { background:#0d1117; border:1px solid var(--border); border-radius:6px; padding:1px 5px; font-size:13px; }
   pre { padding:10px; overflow:auto; }
+  pre code { background:none; border:none; padding:0; }
+  table { border-collapse:collapse; margin:10px 0; display:block; overflow-x:auto; width:max-content; max-width:100%; }
+  th, td { border:1px solid var(--border); padding:6px 10px; font-size:13px; text-align:left; vertical-align:top; }
+  th { background:#1f2937; }
+  blockquote { border-left:3px solid var(--accent); margin:10px 0; padding:6px 12px; color:var(--muted); }
+  ul, ol { margin:8px 0; padding-left:24px; }
+  li { margin:2px 0; }
+  hr { border:none; border-top:1px solid var(--border); margin:14px 0; }
+  del { color:var(--muted); }
   .muted { color:var(--muted); }
   .small { font-size:13px; }
   .mono { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:13px; word-break:break-all; }
@@ -136,7 +145,7 @@ function myUsername(){ const w = whoamiCache(); return w && w.actor ? w.actor.us
 function uuid(){ return (crypto.randomUUID ? crypto.randomUUID() : "xxxxxxxx-xxxx-4xxx-xxxx-xxxxxxxxxxxx".replace(/x/g,()=>(Math.random()*16|0).toString(16))); }
 
 /* ================= utils ================= */
-function esc(s){ if(s==null) return ""; const d=document.createElement("div"); d.textContent=String(s); return d.innerHTML; }
+function esc(s){ if(s==null) return ""; return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;"); }
 function escAttr(s){ return esc(s).replace(/"/g,"&quot;"); }
 function timeAgo(iso){
   const t = Date.parse(iso); if(isNaN(t)) return iso||"";
@@ -149,17 +158,135 @@ function timeAgo(iso){
 }
 function actorName(a){ return a ? (a.display_name || a.username) : "[deleted]"; }
 function actorTag(a){ return a ? "@"+a.username : "deleted"; }
+/*__MD_START__*/
+/* Client-side markdown (GFM subset): headings, hr, fenced code, tables,
+   lists (nested + task items), blockquotes, links/images/autolinks,
+   bold/italic/strikethrough/inline code.
+   XSS-safe by construction: input is HTML-escaped first, code spans are
+   stashed in placeholders before any other rule runs, only our own tags
+   are ever emitted, and URLs are allow-listed (http/https/mailto or
+   site-relative for links, http/https-only for images). */
+function mdSafeUrl(u, allowRelative){
+  const raw = String(u).replace(/&amp;/g,"&").replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&quot;/g,'"').replace(/&#39;/g,"'").trim();
+  if(!raw || /[\s<>"']/.test(raw)) return null;
+  const m = raw.match(/^([A-Za-z][A-Za-z0-9+.-]*):/);
+  if(m){
+    const scheme = m[1].toLowerCase();
+    if(scheme==="http" || scheme==="https" || (allowRelative && scheme==="mailto")) return esc(raw);
+    return null;
+  }
+  return allowRelative ? esc(raw) : null;
+}
+function mdInline(text){
+  // links, images and autolinks in ONE pass, so URLs inside generated
+  // tags are never re-matched by a later rule
+  text = text.replace(/!\[([^\]]*)\]\(([^)\s]+)\)|\[([^\]]+)\]\(([^)\s]+)\)|(https?:\/\/[^\s<>"')]+)/g, (mt, alt, isrc, label, href, auto)=>{
+    if(isrc !== undefined){
+      const ok = mdSafeUrl(isrc, false);
+      return ok ? `<img loading="lazy" alt="${alt}" src="${ok}">` : mt;
+    }
+    if(href !== undefined){
+      const ok = mdSafeUrl(href, true);
+      if(!ok) return mt;
+      const ext = /^https?:/i.test(href.replace(/&amp;/g,"&"));
+      return `<a href="${ok}"${ext ? ' target="_blank" rel="noopener"' : ""}>${label}</a>`;
+    }
+    let url = auto, trail = "";
+    while(url.length && /[.,;:!?]/.test(url[url.length-1])){ trail = url[url.length-1]+trail; url = url.slice(0,-1); }
+    return `<a href="${url}" target="_blank" rel="noopener">${url}</a>${trail}`;
+  });
+  text = text.replace(/~~([^~]+)~~/g, "<del>$1</del>");
+  text = text.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  text = text.replace(/\*([^*]+)\*/g, "<em>$1</em>");
+  return text;
+}
+function mdSplitRow(line){
+  let s = line.trim();
+  if(s.startsWith("|")) s = s.slice(1);
+  if(s.endsWith("|")) s = s.slice(0,-1);
+  return s.split("|");
+}
+function mdTryTable(lines, i){
+  if(i+1 >= lines.length || lines[i].indexOf("|") < 0) return null;
+  const head = mdSplitRow(lines[i]);
+  const delim = mdSplitRow(lines[i+1]);
+  if(!delim.length) return null;
+  const aligns = [];
+  for(const d of delim){
+    const c = d.trim();
+    if(!/^:?-+:?$/.test(c)) return null;
+    aligns.push(c.startsWith(":") && c.endsWith(":") && c.length > 2 ? "center" : c.endsWith(":") ? "right" : c.startsWith(":") ? "left" : null);
+  }
+  const n = Math.max(head.length, aligns.length);
+  const cell = (tag, v, k)=>{
+    const a = aligns[k] ? ` style="text-align:${aligns[k]}"` : "";
+    return `<${tag}${a}>${mdInline((v||"").trim())}</${tag}>`;
+  };
+  let html = "<table><thead><tr>";
+  for(let k=0;k<n;k++) html += cell("th", head[k], k);
+  html += "</tr></thead><tbody>";
+  let j = i+2;
+  while(j < lines.length && lines[j].indexOf("|") >= 0 && lines[j].trim() !== ""){
+    const cells = mdSplitRow(lines[j]);
+    html += "<tr>";
+    for(let k=0;k<n;k++) html += cell("td", cells[k], k);
+    html += "</tr>";
+    j++;
+  }
+  return { html: html+"</tbody></table>", next: j };
+}
+function mdBuildList(items){
+  let out = "";
+  const stack = [];
+  for(const it of items){
+    while(stack.length && it.ind < stack[stack.length-1].ind){ const s = stack.pop(); out += "</li></"+s.tag+">"; }
+    const tag = it.ordered ? "ol" : "ul";
+    if(!stack.length || it.ind > stack[stack.length-1].ind){ stack.push({ind:it.ind,tag}); out += "<"+tag+">"; }
+    else if(stack[stack.length-1].tag !== tag){ const s = stack.pop(); out += "</li></"+s.tag+">"; stack.push({ind:it.ind,tag}); out += "<"+tag+">"; }
+    else { out += "</li>"; }
+    const t = it.text.replace(/^\[( |x|X)\]\s+/, (mm,c)=>`<input type="checkbox" disabled${c===" " ? "" : " checked"}> `);
+    out += "<li>"+mdInline(t);
+  }
+  while(stack.length){ const s = stack.pop(); out += "</li></"+s.tag+">"; }
+  return out;
+}
 function renderMarkdown(text){
   if(!text) return "";
+  const store = [];
+  // NUL-wrapped tokens: invisible to every block/inline rule and immune
+  // to .trim() inside table cells (trim never strips U+0000).
+  const tok = (html)=>{ store.push(html); return "\0MD"+(store.length-1)+"\0"; };
   let t = esc(text);
-  t = t.replace(/`([^`]+)`/g, "<code>$1</code>");
-  t = t.replace(/^### (.*)$/gm, "<h4>$1</h4>");
-  t = t.replace(/^## (.*)$/gm, "<h3>$1</h3>");
-  t = t.replace(/^# (.*)$/gm, "<h2>$1</h2>");
-  t = t.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-  t = t.replace(/\*([^*]+)\*/g, "<em>$1</em>");
-  return t;
+  t = t.replace(/```(\w*)\n([\s\S]*?)(?:```|$)/g, (m, lang, code)=>tok("<pre><code>"+code.replace(/^\n+|\n+$/g,"")+"</code></pre>"));
+  t = t.replace(/`([^`\n]+)`/g, (m, code)=>tok("<code>"+code+"</code>"));
+  const lines = t.split("\n");
+  const out = [];
+  let i = 0, m;
+  while(i < lines.length){
+    const ln = lines[i];
+    const tbl = mdTryTable(lines, i);
+    if(tbl){ out.push({h:1, s:tbl.html}); i = tbl.next; continue; }
+    if((m = ln.match(/^(#{1,6})\s+(.*)$/))){ const lv = Math.min(m[1].length+1, 6); out.push({h:1, s:`<h${lv}>${mdInline(m[2])}</h${lv}>`}); i++; continue; }
+    if(/^\s*(\*\*\*|---|___)\s*$/.test(ln)){ out.push({h:1, s:"<hr>"}); i++; continue; }
+    if(/^\s*&gt;\s?/.test(ln)){
+      const buf = [];
+      while(i < lines.length && /^\s*&gt;\s?/.test(lines[i])){ buf.push(lines[i].replace(/^\s*&gt;\s?/, "")); i++; }
+      out.push({h:1, s:"<blockquote>"+mdInline(buf.join("\n"))+"</blockquote>"}); continue;
+    }
+    if((m = ln.match(/^(\s*)([-*+]|\d+[.)])\s+(.*)$/))){
+      const items = [];
+      while(i < lines.length && (m = lines[i].match(/^(\s*)([-*+]|\d+[.)])\s+(.*)$/))){
+        items.push({ind:m[1].replace(/\t/g, "  ").length, ordered:/^\d/.test(m[2]), text:m[3]});
+        i++;
+      }
+      out.push({h:1, s:mdBuildList(items)}); continue;
+    }
+    out.push({h:0, s:ln}); i++;
+  }
+  return out.map(o=>o.h ? o.s : mdInline(o.s)).join("\n")
+    .replace(/\0MD(\d+)\0/g, (mm,k)=>store[Number(k)]);
 }
+/*__MD_END__*/
 function flash(msg, ok=true){
   const f=$("#flash"); f.style.background = ok ? "#2ea043" : "#da3633"; f.style.color = ok ? "#0e1117" : "#fff";
   f.textContent = msg; f.style.display="block";
