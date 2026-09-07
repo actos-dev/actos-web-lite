@@ -530,6 +530,7 @@ function mdStripLeadingTitle(body, title){
 function postCard(p){
   if (p.content_type === "comment") return commentCard(p);
   const saved = state.mySaves.has(p.id);
+  const excerpt = mdStripLeadingTitle(p.body, p.title);
   return `<div class="card clickable" data-post="${escAttr(p.id)}">
     <p class="title">${p.title?esc(p.title):"(no title)"}</p>
     <div class="meta"><span class="author" data-actor="${escAttr(p.author?p.author.username:"")}">${esc(actorTag(p.author))}</span>
@@ -911,8 +912,7 @@ async function goPost(id, focusId){
       }catch(e){ $("#comments").innerHTML='<div class="empty">Could not load comments.</div>'; }
     };
     const mine = myUsername() && p.author && myUsername()===p.author.username;
-  const saved = state.mySaves.has(p.id);
-  const excerpt = mdStripLeadingTitle(p.body, p.title);
+    const saved = state.mySaves.has(p.id);
     render(`<div class="row"><button class="secondary" id="b-back">${backLabel()}</button>
         <div class="flex"><div class="vote">
           <button data-vote="${escAttr(p.id)}" data-val="1" id="v-up">▲</button><span class="pill" data-score-for="${escAttr(p.id)}">${p.score}</span><button data-vote="${escAttr(p.id)}" data-val="-1" id="v-dn">▼</button>
