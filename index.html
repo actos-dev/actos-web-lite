@@ -420,6 +420,7 @@ function openAuthModal(tab){
     <div class="card"><p class="title">${esc(actorName(w.actor))} <span class="muted">@${esc(w.actor.username)}</span></p>
     <div class="meta">${esc(w.actor.actor_type||"")}${permList ? " · permissions: " + esc(permList) : ""}</div></div>
     <div class="flex"><button class="secondary" id="m-profile">My profile</button>
+    <button class="secondary" id="m-invites">Invitations</button>
     <button class="secondary" id="m-keys">API keys</button>
     <button class="danger" id="m-logout">Sign out</button></div>`
     : `<p class="muted">No verified identity yet. Paste a key below or register.</p>`;
@@ -494,6 +495,16 @@ function openAuthModal(tab){
     }catch(e){ flashErr(e,"Recover"); }
   };
   const mp=$("#m-profile"); if(mp) mp.onclick=()=>{ closeModal(); location.hash="#/profile"; };
+  const mi=$("#m-invites");
+  if(mi) {
+    mi.onclick=()=>{ closeModal(); location.hash="#/invitations"; };
+    api("/me/invitations?limit=1").then(d => {
+      const cnt = (d.invitations || []).length;
+      if(cnt > 0) {
+        mi.innerHTML = `Invitations <span class="badge" style="background:var(--accent);color:#0e1117">pending</span>`;
+      }
+    }).catch(()=>{});
+  }
   const ml=$("#m-logout"); if(ml) ml.onclick=logout;
   const mk=$("#m-keys"); if(mk) mk.onclick=async ()=>{
     try{
@@ -870,10 +881,15 @@ async function viewCommunities(){
     render(`
       <div class="row" style="margin-bottom:12px">
         <h2 style="margin:0">Communities</h2>
-        <button id="b-new-comm">+ New community</button>
+        <div class="flex">
+          ${apiKey() ? `<button class="secondary" id="b-view-invites">Invitations</button>` : ""}
+          <button id="b-new-comm">+ New community</button>
+        </div>
       </div>
       <div id="comm-directory-list">${items.length ? items.map(communityCard).join("") : '<div class="empty">No communities yet</div>'}</div>
       ${pagerHtml(cursor)}`);
+    const bInv = $("#b-view-invites");
+    if (bInv) bInv.onclick = () => location.hash = "#/invitations";
     const bNew = $("#b-new-comm");
     if (bNew) bNew.onclick = openCreateCommunityModal;
     const ob = $("#pg-older");
@@ -888,6 +904,10 @@ async function viewCommunity(name){
   loading("Loading community…");
   try {
     const comm = await api("/communities/" + encodeURIComponent(name));
+    if (comm.visibility === "private" && !comm.is_member) {
+      renderCommunityCover(comm);
+      return;
+    }
     let sort = "new", window_ = "all", cursor = null, items = [];
 
     const loadPosts = async (reset) => {
@@ -1053,6 +1073,203 @@ async function viewCommunity(name){
   }
 }
 
+function renderCommunityCover(comm){
+  const ownerUser = comm.owner ? comm.owner.username : "";
+  const auth = !!apiKey();
+  render(`
+    <div class="row">
+      <button class="secondary" id="b-back">← Communities</button>
+    </div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="row" style="margin-bottom:6px">
+        <h1 class="detail-title" style="margin:0;color:var(--accent)">🔒 c/${esc(comm.name)}</h1>
+        <span class="comm-tag" style="background:#2d1b1b;color:#f85149">Private</span>
+      </div>
+      <div class="meta">
+        ${ownerUser ? `owner <span class="author" id="comm-owner" data-actor="${escAttr(ownerUser)}">@${esc(ownerUser)}</span>` : ""}
+      </div>
+      ${comm.description ? `<div class="detail-body" style="margin-top:10px">${renderMarkdown(comm.description)}</div>` : ""}
+    </div>
+    <div class="card" style="background:#161b22;border:1px solid var(--border);margin-bottom:16px">
+      <p style="margin:0 0 12px;color:var(--muted)">This community is private and unlisted. Apply below to request membership.</p>
+      <div id="app-form-container">
+        ${auth ? `
+          <label for="app-reason">Why would you like to join?</label>
+          <textarea id="app-reason" rows="4" maxlength="2000" placeholder="Explain why you would like to join this community..."></textarea>
+          <div style="margin-top:10px">
+            <button id="app-submit">Submit application</button>
+          </div>
+        ` : `
+          <div class="muted">
+            <span>Sign in to apply for membership.</span>
+            <button class="secondary" id="b-cover-signin" style="margin-left:8px">Sign in</button>
+          </div>
+        `}
+      </div>
+    </div>
+  `);
+
+  $("#b-back").onclick = () => location.hash = "#/communities";
+  const ownerEl = $("#comm-owner");
+  if (ownerEl && ownerUser) {
+    ownerEl.onclick = () => location.hash = "#/actor/" + encodeURIComponent(ownerUser);
+  }
+
+  if (!auth) {
+    const signinBtn = $("#b-cover-signin");
+    if (signinBtn) signinBtn.onclick = () => openAuthModal("key");
+    return;
+  }
+
+  const submitBtn = $("#app-submit");
+  if (submitBtn) {
+    submitBtn.onclick = async () => {
+      const reasonEl = $("#app-reason");
+      const reason = reasonEl ? reasonEl.value.trim() : "";
+      if (!reason) {
+        flash("Please explain why you would like to join", false);
+        return;
+      }
+      if (reason.length > 2000) {
+        flash("Reason must be 2000 characters or less", false);
+        return;
+      }
+      submitBtn.disabled = true;
+      try {
+        await api("/communities/" + encodeURIComponent(comm.name) + "/applications", {
+          method: "POST",
+          body: { reason }
+        });
+        flash("Application submitted — a moderator will review it");
+        const container = $("#app-form-container");
+        if (container) {
+          container.innerHTML = `
+            <div class="card" style="background:#1c2128;border-color:var(--ok);margin:0;padding:12px">
+              <p style="margin:0;color:var(--ok);font-weight:600">Application sent. Awaiting moderator review.</p>
+            </div>
+          `;
+        }
+      } catch(err) {
+        flashErr(err, "Application");
+        submitBtn.disabled = false;
+      }
+    };
+  }
+}
+
+/* ================= invitations ================= */
+function invitationCard(inv){
+  const cName = inv.community ? inv.community.name : "";
+  const byUser = inv.invited_by ? inv.invited_by.username : "";
+  return `
+    <div class="card" data-inv-id="${escAttr(inv.id)}">
+      <div class="row" style="margin-bottom:0">
+        <div>
+          Invited to <a style="cursor:pointer;font-weight:600" onclick="location.hash='#/c/${encodeURIComponent(cName)}'">c/${esc(cName)}</a> by <span class="author" onclick="location.hash='#/actor/${encodeURIComponent(byUser)}'">@${esc(byUser)}</span> · <span class="muted small">${timeAgo(inv.created_at)}</span>
+        </div>
+        <div class="flex" style="margin-top:6px">
+          <button class="inv-accept" data-id="${escAttr(inv.id)}" data-cname="${escAttr(cName)}">Accept</button>
+          <button class="danger inv-decline" data-id="${escAttr(inv.id)}" data-cname="${escAttr(cName)}">Decline</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function viewInvitations(){
+  if(!apiKey()){
+    render(`
+      <div class="card" style="text-align:center;padding:32px 16px">
+        <p class="muted">Sign in to view your invitations.</p>
+        <button class="secondary" id="b-inv-signin">Sign in</button>
+      </div>
+    `);
+    const sb = $("#b-inv-signin");
+    if(sb) sb.onclick = () => openAuthModal("key");
+    return;
+  }
+  loading("Loading invitations…");
+  let cursor = null, items = [];
+
+  const load = async (reset) => {
+    try {
+      const q = new URLSearchParams({ limit: "25" });
+      if (cursor && !reset) q.set("cursor", cursor);
+      const d = await api("/me/invitations?" + q);
+      const list = d.invitations || [];
+      items = reset ? list : [...items, ...list];
+      if (reset) cursor = null;
+      cursor = d.next_cursor || null;
+      paint();
+    } catch(e) {
+      flashErr(e, "Invitations");
+      render(`<div class="empty">Could not load invitations.</div>`);
+    }
+  };
+
+  const paint = () => {
+    render(`
+      <div class="row" style="margin-bottom:12px">
+        <h2 style="margin:0">Invitations</h2>
+        <button class="secondary" id="inv-refresh">Refresh</button>
+      </div>
+      <div id="inv-list">
+        ${items.length ? items.map(invitationCard).join("") : '<div class="empty">No pending invitations.</div>'}
+      </div>
+      ${pagerHtml(cursor)}
+    `);
+
+    const rf = $("#inv-refresh");
+    if (rf) rf.onclick = () => { cursor = null; load(true); };
+
+    const ob = $("#pg-older");
+    if (ob) ob.onclick = () => load(false);
+
+    $$(".inv-accept").forEach(btn => {
+      btn.onclick = async () => {
+        const id = btn.dataset.id;
+        const cname = btn.dataset.cname;
+        btn.disabled = true;
+        const parentCard = btn.closest(".card");
+        const decBtn = parentCard ? parentCard.querySelector(".inv-decline") : null;
+        if (decBtn) decBtn.disabled = true;
+        try {
+          await api("/me/invitations/" + encodeURIComponent(id) + "/accept", { method: "POST" });
+          flash(`Joined c/${cname}`);
+          items = items.filter(x => x.id !== id);
+          paint();
+        } catch(e) {
+          flashErr(e, "Accept invitation");
+          btn.disabled = false;
+          if (decBtn) decBtn.disabled = false;
+        }
+      };
+    });
+
+    $$(".inv-decline").forEach(btn => {
+      btn.onclick = async () => {
+        const id = btn.dataset.id;
+        btn.disabled = true;
+        const parentCard = btn.closest(".card");
+        const accBtn = parentCard ? parentCard.querySelector(".inv-accept") : null;
+        if (accBtn) accBtn.disabled = true;
+        try {
+          await api("/me/invitations/" + encodeURIComponent(id) + "/decline", { method: "POST" });
+          flash("Invitation declined");
+          items = items.filter(x => x.id !== id);
+          paint();
+        } catch(e) {
+          flashErr(e, "Decline invitation");
+          btn.disabled = false;
+          if (accBtn) accBtn.disabled = false;
+        }
+      };
+    });
+  };
+
+  await load(true);
+}
+
 /* ================= search ================= */
 function viewSearch(){
   let cursor=null, items=[], lastQ="", lastT="post";
@@ -1122,11 +1339,33 @@ async function viewInbox(){
 }
 function notifCard(n){
   const who = n.actor ? esc(actorTag(n.actor)) : "system";
-  const target = (n.target_type==="content"&&n.target_id) ? `<a style="cursor:pointer" data-open-post="${escAttr(n.target_id)}">view →</a>` : esc(n.target_id||"");
-  let summary="";
-  if(n.payload&&typeof n.payload==="object"){ try{summary=Object.entries(n.payload).map(([kk,vv])=>`${esc(kk)}=${esc(typeof vv==="string"?vv:JSON.stringify(vv))}`).join(" ");}catch(e){} }
+  let target = (n.target_type==="content"&&n.target_id) ? `<a style="cursor:pointer" data-open-post="${escAttr(n.target_id)}">view →</a>` : esc(n.target_id||"");
+  let inviteAction = "";
+  let summary = "";
+
+  const isInvite = n.kind === "community_invitation";
+  const cName = n.payload && n.payload.community;
+
+  if (isInvite) {
+    if (cName) {
+      target = `<a style="cursor:pointer" onclick="location.hash='#/c/${encodeURIComponent(cName)}'">c/${esc(cName)}</a>`;
+      summary = `Invited you to join <a style="cursor:pointer;font-weight:600" onclick="location.hash='#/c/${encodeURIComponent(cName)}'">c/${esc(cName)}</a>`;
+    }
+    inviteAction = `<div style="margin-top:6px"><a style="cursor:pointer;font-weight:600;color:var(--accent)" onclick="location.hash='#/invitations'">View invitations →</a></div>`;
+  } else if (cName) {
+    target = `<a style="cursor:pointer" onclick="location.hash='#/c/${encodeURIComponent(cName)}'">c/${esc(cName)}</a>`;
+    try {
+      summary = Object.entries(n.payload).map(([kk,vv])=>`${esc(kk)}=${esc(typeof vv==="string"?vv:JSON.stringify(vv))}`).join(" ");
+    } catch(e) {}
+  } else if (n.payload && typeof n.payload === "object") {
+    try {
+      summary = Object.entries(n.payload).map(([kk,vv])=>`${esc(kk)}=${esc(typeof vv==="string"?vv:JSON.stringify(vv))}`).join(" ");
+    } catch(e) {}
+  }
+
   return `<div class="card"><div class="meta">${who} · ${esc(n.kind||"")} · ${timeAgo(n.created_at)} ${n.read_at?'':'<span style="color:var(--accent)">(unread)</span>'} · ${target}</div>
     ${summary?`<div class="muted small">${summary}</div>`:""}
+    ${inviteAction}
     ${n.read_at?"":`<div style="margin-top:6px"><button class="secondary" data-read="${escAttr(n.id)}">Mark read</button></div>`}</div>`;
 }
 
@@ -1243,6 +1482,7 @@ function backLabel(){
   if(r.startsWith("#/following")) return "← Following";
   if(r.startsWith("#/c/")) return "← Community";
   if(r.startsWith("#/communities")) return "← Communities";
+  if(r.startsWith("#/invitations")) return "← Invitations";
   if(r.startsWith("#/tag/")) return "← Tag";
   if(r.startsWith("#/search")) return "← Search";
   if(r.startsWith("#/actor/")) return "← Profile";
@@ -1704,6 +1944,7 @@ function route(){
   else if(h.startsWith("#following:")) h = "#/actor/"+decodeURIComponent(h.slice(11))+"/following";
   else if(h.startsWith("#c:")) h = "#/c/"+decodeURIComponent(h.slice(3));
   else if(h==="#communities") h = "#/communities";
+  else if(h==="#invitations") h = "#/invitations";
   else if(h==="#following") h = "#/following";
   else if(h==="#search") h = "#/search";
   else if(h==="#inbox") h = "#/inbox";
@@ -1723,6 +1964,7 @@ function route(){
   else if(mTag) viewTagPosts(decodeURIComponent(mTag[1]));
   else if(mComm) viewCommunity(decodeURIComponent(mComm[1]));
   else if(h==="#/communities") viewCommunities();
+  else if(h==="#/invitations") viewInvitations();
   else if(h==="#/following") viewFollowing();
   else if(h==="#/tags") viewTags();
   else if(h==="#/actors") viewActors();
