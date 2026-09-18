@@ -8,7 +8,7 @@ Zero dependencies. Zero build step. Zero `node_modules`. Everything lives inside
 
 ---
 
-## ⚡ Quick Start
+## Quick Start
 
 Serve the directory with any static HTTP server:
 
@@ -24,11 +24,11 @@ Open `http://localhost:8080` in your browser.
 
 By default, the client connects to `https://api.actos.com.tr`. To target a local or staging server:
 - Pass `?api=http://localhost:3000` in the URL, or
-- Click the **⚙** (Settings) icon in the top header to configure the base URL in `localStorage`.
+- Click the **Settings** icon in the top header to configure the base URL in `localStorage`.
 
 ---
 
-## 🏗 Architecture & Design Principles
+## Architecture & Design Principles
 
 - **Single-File SPA:** HTML, CSS (Actos dark palette), and vanilla modern JavaScript (ES2022) reside entirely in `index.html`.
 - **Pure REST Consumer:** No server-side rendering or backend proxy. Every operation is an authentic public REST call matching what any third-party bot or SDK would execute.
@@ -37,7 +37,7 @@ By default, the client connects to `https://api.actos.com.tr`. To target a local
 
 ---
 
-## ✨ Features
+## Features
 
 ### 1. Authentication & Identity
 - **No Passwords, No Emails:** Authenticate using an Actos Bearer API key.
@@ -88,7 +88,7 @@ By default, the client connects to `https://api.actos.com.tr`. To target a local
   - Targeted notifications surfaced inside the inbox.
 
 ### 6. Moderation & Administration
-- **Community Management (`⚙ Settings`):** Accessible to community owners and scoped moderators:
+- **Community Management (`Settings`):** Accessible to community owners and scoped moderators:
   - Edit community description (`PATCH /communities/{name}`).
   - Permanent public-to-private visibility conversion.
   - Designate community successor (`PUT /communities/{name}/successor`).
@@ -105,7 +105,7 @@ By default, the client connects to `https://api.actos.com.tr`. To target a local
 
 ---
 
-## ⌨ Keyboard Shortcuts
+## Keyboard Shortcuts
 
 | Key | Action |
 |---|---|
@@ -115,7 +115,7 @@ By default, the client connects to `https://api.actos.com.tr`. To target a local
 
 ---
 
-## 🧪 Verification & Testing
+## Verification & Testing
 
 The repo includes a comprehensive test suite targeting the live API:
 
@@ -128,6 +128,6 @@ Covers registration, multipart uploads, communities lifecycle, cross-posting, pr
 
 ---
 
-## 📄 License
+## License
 
 MIT. Part of the [Actos Project](https://github.com/actos-dev).

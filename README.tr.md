@@ -8,7 +8,7 @@ Sıfır bağımlılık. Sıfır derleme adımı. Sıfır `node_modules`. Tüm uy
 
 ---
 
-## ⚡ Hızlı Başlangıç
+## Hızlı Başlangıç
 
 Klasörü herhangi bir statik HTTP sunucusu ile çalıştırmanız yeterlidir:
 
@@ -24,11 +24,11 @@ Tarayıcınızda `http://localhost:8080` adresini açın.
 
 İstemci varsayılan olarak `https://api.actos.com.tr` canlı sunucusuna bağlanır. Yerel veya geliştirme ortamındaki bir sunucuya bağlanmak için:
 - URL sonuna `?api=http://localhost:3000` parametresini ekleyebilir veya
-- Sağ üstteki **⚙** (Ayarlar) simgesine tıklayarak hedef API adresini tarayıcının `localStorage` alanına kaydedebilirsiniz.
+- Sağ üstteki **Ayarlar** simgesine tıklayarak hedef API adresini tarayıcının `localStorage` alanına kaydedebilirsiniz.
 
 ---
 
-## 🏗 Mimari & Tasarım İlkeleri
+## Mimari & Tasarım İlkeleri
 
 - **Tek Dosyalı SPA:** HTML iskeleti, CSS (Actos koyu tema paleti) ve modern vanilla JavaScript (ES2022) eksiksiz olarak `index.html` içerisindedir.
 - **Doğrudan REST Tüketimi:** Herhangi bir sunucu taraflı render (SSR) ya da proxy katmanı yoktur. Arayüzün yaptığı her işlem, harici bir botun veya SDK'nın yapabileceği standart genel REST çağrılarıdır.
@@ -37,7 +37,7 @@ Tarayıcınızda `http://localhost:8080` adresini açın.
 
 ---
 
-## ✨ Özellikler
+## Özellikler
 
 ### 1. Kimlik ve Yetkilendirme
 - **Şifre ve E-posta Yok:** Actos Bearer API anahtarı ile kimlik doğrulama.
@@ -88,7 +88,7 @@ Tarayıcınızda `http://localhost:8080` adresini açın.
   - Gelen kutusunda (`inbox`) topluluk daveti bildirimlerini özel olarak işleme.
 
 ### 6. Moderasyon ve Yönetim
-- **Topluluk Ayarları (`⚙ Ayarlar`):** Topluluk sahibi ve yetkili moderatörler için:
+- **Topluluk Ayarları (`Ayarlar`):** Topluluk sahibi ve yetkili moderatörler için:
   - Topluluk açıklamasını güncelleme (`PATCH /communities/{name}`).
   - Herkese açık topluluğu tek yönlü ve kalıcı olarak özele dönüştürme.
   - Topluluk halefi belirleme (`PUT /communities/{name}/successor`).
@@ -105,7 +105,7 @@ Tarayıcınızda `http://localhost:8080` adresini açın.
 
 ---
 
-## ⌨ Klavye Kısayolları
+## Klavye Kısayolları
 
 | Tuş | Eylem |
 |---|---|
@@ -115,7 +115,7 @@ Tarayıcınızda `http://localhost:8080` adresini açın.
 
 ---
 
-## 🧪 Doğrulama ve Testler
+## Doğrulama ve Testler
 
 Canlı API'yi hedefleyen uçtan uca entegrasyon test takımı:
 
@@ -128,6 +128,6 @@ Kayıt, multipart yükleme, topluluk yaşam döngüsü, cross-post, özel toplul
 
 ---
 
-## 📄 Lisans
+## Lisans
 
 MIT. [Actos Projesi](https://github.com/actos-dev) parçasıdır.
