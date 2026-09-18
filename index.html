@@ -42,6 +42,11 @@
   .author { color:var(--accent); cursor:pointer; border-radius:4px; padding:0 2px; transition:background .12s ease; }
   .author:hover { text-decoration:underline; background:#1f2937; }
   .pill { color:var(--muted); font-size:12px; }
+  .comm-tag { display:inline-block; background:#1b2838; color:#79c0ff; border:1px solid rgba(56,139,253,.3); border-radius:10px; padding:1px 8px; font-size:12px; font-weight:500; cursor:pointer; transition:background .12s ease, transform .06s ease; }
+  .comm-tag:hover { background:#243a5e; text-decoration:underline; }
+  .comm-tag:active { transform:scale(.95); }
+  .cross-post-card { transition:border-color .12s ease, background .12s ease; }
+  .cross-post-card:hover { border-color:var(--accent); background:#1c2128 !important; }
   .badge { display:inline-block; background:var(--danger); color:#fff; border-radius:10px; padding:0 7px; font-size:12px; font-weight:700; margin-left:4px; }
   .row { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:14px; }
   .detail-title { font-size:22px; font-weight:700; margin:0 0 6px; }
@@ -103,6 +108,7 @@
   <nav id="nav">
     <a data-route="#/feed">Feed</a>
     <a data-route="#/following">Following</a>
+    <a data-route="#/communities">Communities</a>
     <a data-route="#/tags">Tags</a>
     <a data-route="#/actors">Actors</a>
     <a data-route="#/search">Search</a>
@@ -327,7 +333,11 @@ function render(html){ $("#app").innerHTML = html; markNav(); }
 function loading(msg){ render(`<div class="loading">${esc(msg||"Loading…")}</div>`); }
 function markNav(){
   const h = location.hash || "#/feed";
-  $$("#nav a").forEach(a => a.classList.toggle("active", h.startsWith(a.dataset.route)));
+  $$("#nav a").forEach(a => {
+    const r = a.dataset.route;
+    const active = h.startsWith(r) || (r === "#/communities" && h.startsWith("#/c/"));
+    a.classList.toggle("active", active);
+  });
 }
 
 /* ================= transport ================= */
@@ -533,17 +543,73 @@ function mdStripLeadingTitle(body, title){
   if(m && norm(m[2]) === norm(title)){ lines.splice(i, 1); return lines.join("\n"); }
   return body;
 }
+function crossPostCard(xp){
+  if (!xp) {
+    return `<div class="card" style="border-style:dashed; opacity:0.8; margin:8px 0 4px; padding:10px 14px"><span class="muted">Cross-posted content is unavailable (deleted or private)</span></div>`;
+  }
+  const title = xp.title ? esc(xp.title) : "(no title)";
+  const authorUser = xp.author ? xp.author.username : "";
+  const authorTagStr = xp.author ? actorTag(xp.author) : "deleted";
+  const commTagStr = (xp.community && xp.community.name)
+    ? ` · in <span class="comm-tag" data-comm="${escAttr(xp.community.name)}">c/${esc(xp.community.name)}</span>`
+    : "";
+  return `<div class="card cross-post-card" data-cross-post="${escAttr(xp.id)}" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px 14px;margin:8px 0 4px;cursor:pointer">
+    <div style="font-weight:600;font-size:15px;margin-bottom:4px;color:var(--fg)">${title}</div>
+    <div class="meta" style="margin-bottom:0;font-size:12px">
+      ${authorUser ? `<span class="author" data-actor="${escAttr(authorUser)}">${esc(authorTagStr)}</span>` : `<span class="muted">[deleted]</span>`}${commTagStr}
+      · <a href="#/post/${escAttr(xp.id)}" class="ops-link" style="font-size:12px">view original →</a>
+    </div>
+  </div>`;
+}
+function communityCard(c){
+  const ownerUser = c.owner ? c.owner.username : "";
+  const desc = c.description ? (renderMarkdown(c.description.slice(0, 300)) + (c.description.length > 300 ? " …" : "")) : "";
+  const isPrivate = c.visibility === "private";
+  const visBadge = `<span class="pill" style="border:1px solid var(--border);border-radius:10px;padding:1px 7px;font-size:11px">${isPrivate ? "private" : "public"}</span>`;
+  return `<div class="card clickable" data-comm-card="${escAttr(c.name)}">
+    <div class="row" style="margin-bottom:6px">
+      <span style="font-size:17px;font-weight:700;color:var(--accent)">c/${esc(c.name)}</span>
+      ${visBadge}
+    </div>
+    <div class="meta">
+      ${c.member_count} member${c.member_count === 1 ? "" : "s"} · ${c.post_count} post${c.post_count === 1 ? "" : "s"}
+      ${ownerUser ? ` · owner <span class="author" data-actor="${escAttr(ownerUser)}">@${esc(ownerUser)}</span>` : ""}
+    </div>
+    ${desc ? `<div class="body" style="margin-top:6px;font-size:14px">${desc}</div>` : ""}
+  </div>`;
+}
 function postCard(p){
   if (p.content_type === "comment") return commentCard(p);
   const saved = state.mySaves.has(p.id);
-  const excerpt = mdStripLeadingTitle(p.body, p.title);
+  const commHtml = (p.community && p.community.name)
+    ? `<span class="comm-tag" data-comm="${escAttr(p.community.name)}">c/${esc(p.community.name)}</span> · `
+    : "";
+
+  let titleHtml = "";
+  let bodyHtml = "";
+
+  if (p.is_cross_post) {
+    const originComm = (p.cross_post && p.cross_post.community && p.cross_post.community.name)
+      ? ` from <span class="comm-tag" data-comm="${escAttr(p.cross_post.community.name)}">c/${esc(p.cross_post.community.name)}</span>`
+      : "";
+    titleHtml = `<p class="title" style="font-size:15px;font-weight:500;color:var(--muted)">⮑ Cross-posted${originComm}</p>`;
+    if (p.body) {
+      bodyHtml += `<div class="body">${renderMarkdown(p.body)}</div>`;
+    }
+    bodyHtml += crossPostCard(p.cross_post);
+  } else {
+    titleHtml = `<p class="title">${p.title ? esc(p.title) : "(no title)"}</p>`;
+    const excerpt = mdStripLeadingTitle(p.body, p.title);
+    bodyHtml = `<div class="body">${renderMarkdown(excerpt.slice(0,400))}${excerpt.length > 400 ? " …" : ""}</div>`;
+  }
+
   return `<div class="card clickable" data-post="${escAttr(p.id)}">
-    <p class="title">${p.title?esc(p.title):"(no title)"}</p>
-    <div class="meta"><span class="author" data-actor="${escAttr(p.author?p.author.username:"")}">${esc(actorTag(p.author))}</span>
+    ${titleHtml}
+    <div class="meta">${commHtml}<span class="author" data-actor="${escAttr(p.author ? p.author.username : "")}">${esc(actorTag(p.author))}</span>
     · ${timeAgo(p.created_at)} · ▲ <span data-score-for="${escAttr(p.id)}">${p.score}</span> · ${p.comment_count} comments</div>
     <div>${tagsHtml(p.tags)}</div>
-    <div class="body">${renderMarkdown(excerpt.slice(0,400))}${excerpt.length>400?" …":""}</div>
-    ${p.attachments&&p.attachments.length?`<div class="flex" style="margin-top:6px">${p.attachments.map(a=>`<img class="thumb" loading="lazy" src="${escAttr(a.thumbnail_url||a.url)}" data-full="${escAttr(a.url)}" alt="">`).join("")}</div>`:""}
+    ${bodyHtml}
+    ${p.attachments && p.attachments.length ? `<div class="flex" style="margin-top:6px">${p.attachments.map(a => `<img class="thumb" loading="lazy" src="${escAttr(a.thumbnail_url || a.url)}" data-full="${escAttr(a.url)}" alt="">`).join("")}</div>` : ""}
   </div>`;
 }
 /* One broken item must never kill a whole list — skip it loudly. */
@@ -558,6 +624,7 @@ function bindCards(root){
   $$("[data-comment]",root).forEach(el=>{
     el.onclick = e=>{
       const t = e.target;
+      if (t.closest("[data-comm]")){ e.stopPropagation(); location.hash = "#/c/"+encodeURIComponent(t.closest("[data-comm]").dataset.comm); return; }
       if (t.closest("[data-actor]")){ e.stopPropagation(); location.hash = "#/actor/"+encodeURIComponent(t.closest("[data-actor]").dataset.actor); return; }
       openCommentThread(el.dataset.comment);
     };
@@ -565,13 +632,22 @@ function bindCards(root){
   $$("[data-post]",root).forEach(el=>{
     el.onclick = e=>{
       const t = e.target;
+      if (t.closest("[data-comm]")){ e.stopPropagation(); location.hash = "#/c/"+encodeURIComponent(t.closest("[data-comm]").dataset.comm); return; }
       if (t.closest("[data-tag]")){ location.hash = "#/tag/"+encodeURIComponent(t.closest("[data-tag]").dataset.tag); return; }
       if (t.closest("[data-actor]")){ e.stopPropagation(); location.hash = "#/actor/"+encodeURIComponent(t.closest("[data-actor]").dataset.actor); return; }
+      if (t.closest("[data-cross-post]")){ e.stopPropagation(); location.hash = "#/post/"+encodeURIComponent(t.closest("[data-cross-post]").dataset.crossPost); return; }
       if (t.closest("img[data-full]")){ e.stopPropagation(); window.open(t.closest("img").dataset.full,"_blank"); return; }
       location.hash = "#/post/"+el.dataset.post;
     };
   });
   $$("[data-actor-card]",root).forEach(el=>{ el.onclick=()=>{ location.hash="#/actor/"+encodeURIComponent(el.dataset.actorCard); }; });
+  $$("[data-comm-card]",root).forEach(el=>{
+    el.onclick = e => {
+      const t = e.target;
+      if (t.closest("[data-actor]")){ e.stopPropagation(); location.hash = "#/actor/"+encodeURIComponent(t.closest("[data-actor]").dataset.actor); return; }
+      location.hash = "#/c/"+encodeURIComponent(el.dataset.commCard);
+    };
+  });
 }
 /* A comment carries no parent link, so resolve its thread via the
    ancestor chain (ancestors[0] is always the root post). */
@@ -680,7 +756,7 @@ async function viewTagPosts(name){
   };
   const paint=()=>{
     render(`<h2>#${esc(name)}</h2><div class="row"><div class="flex"><select id="ts"><option value="new">New</option><option value="top">Top</option><option value="hot">Hot</option></select></div></div>
-    <div>${items.length?items.map(postCard).join(""):'<div class="empty">No live posts under this tag.</div>'}</div>${pagerHtml(cursor)}`);
+    <div>${items.length?safeCards(items):'<div class="empty">No live posts under this tag.</div>'}</div>${pagerHtml(cursor)}`);
     $("#ts").value=sort; $("#ts").onchange=e=>{sort=e.target.value;items=[];cursor=null;load();};
     const ob=$("#pg-older"); if(ob)ob.onclick=load;
     bindCards($("#app")); hydrateVoteState(items.map(p=>p.id));
@@ -706,13 +782,203 @@ async function viewActors(){
   loading("Loading actors…"); await load();
 }
 
+/* ================= communities ================= */
+async function viewCommunities(){
+  let cursor = null, items = [];
+  const load = async (reset) => {
+    try {
+      const q = new URLSearchParams({ limit: "25" });
+      if (cursor && !reset) q.set("cursor", cursor);
+      const d = await api("/communities?" + q);
+      const list = d.communities || [];
+      items = reset ? list : [...items, ...list];
+      if (reset) cursor = null;
+      cursor = d.next_cursor || null;
+      paint();
+    } catch(e) {
+      flashErr(e, "Communities");
+      render(`<div class="empty">Could not load communities.</div>`);
+    }
+  };
+  const paint = () => {
+    render(`<h2>Communities</h2>
+      <div id="comm-list">${items.length ? items.map(communityCard).join("") : '<div class="empty">No communities yet</div>'}</div>
+      ${pagerHtml(cursor)}`);
+    const ob = $("#pg-older");
+    if (ob) ob.onclick = () => load(false);
+    bindCards($("#app"));
+  };
+  loading("Loading communities…");
+  await load(true);
+}
+
+async function viewCommunity(name){
+  loading("Loading community…");
+  try {
+    const comm = await api("/communities/" + encodeURIComponent(name));
+    let sort = "new", window_ = "all", cursor = null, items = [];
+
+    const loadPosts = async (reset) => {
+      try {
+        const q = new URLSearchParams({ sort, limit: "25" });
+        if (sort === "top") q.set("window", window_);
+        if (cursor && !reset) q.set("cursor", cursor);
+        const d = await api("/communities/" + encodeURIComponent(name) + "/posts?" + q);
+        const list = d.posts || [];
+        items = reset ? list : [...items, ...list];
+        if (reset) cursor = null;
+        cursor = d.next_cursor || null;
+        paintPosts();
+      } catch(e) {
+        flashErr(e, "Community feed");
+        const listEl = $("#comm-posts-list");
+        if (listEl) listEl.innerHTML = '<div class="empty">Could not load community posts.</div>';
+      }
+    };
+
+    const paint = () => {
+      const ownerUser = comm.owner ? comm.owner.username : "";
+      const isPrivate = comm.visibility === "private";
+      const visBadge = `<span class="pill" style="border:1px solid var(--border);border-radius:10px;padding:1px 8px;font-size:12px">${isPrivate ? "private" : "public"}</span>`;
+
+      const joinBtnHtml = apiKey()
+        ? `<button id="comm-join" class="${comm.is_member ? "secondary" : ""}">${comm.is_member ? "Leave" : "Join"}</button>`
+        : "";
+
+      render(`
+        <div class="row">
+          <button class="secondary" id="b-back">← Communities</button>
+          ${joinBtnHtml}
+        </div>
+        <div class="card" style="margin-bottom:16px">
+          <div class="row" style="margin-bottom:6px">
+            <h1 class="detail-title" style="margin:0;color:var(--accent)">c/${esc(comm.name)}</h1>
+            ${visBadge}
+          </div>
+          <div class="meta">
+            <span id="comm-stats" class="pill">${comm.member_count} members · ${comm.post_count} posts</span>
+            ${ownerUser ? ` · owner <span class="author" id="comm-owner" data-actor="${escAttr(ownerUser)}">@${esc(ownerUser)}</span>` : ""}
+          </div>
+          ${comm.description ? `<div class="detail-body" style="margin-top:10px">${renderMarkdown(comm.description)}</div>` : ""}
+        </div>
+        <div class="row">
+          <div class="flex">
+            <select id="comm-sort">
+              <option value="new">New</option>
+              <option value="hot">Hot</option>
+              <option value="top">Top</option>
+            </select>
+            <select id="comm-win" style="display:${sort === "top" ? "inline" : "none"}">
+              <option value="day">Day</option>
+              <option value="week">Week</option>
+              <option value="month">Month</option>
+              <option value="all">All</option>
+            </select>
+            <button class="secondary" id="comm-refresh">Refresh</button>
+          </div>
+        </div>
+        <div id="comm-posts-list"><div class="loading">Loading posts…</div></div>
+        <div id="comm-pager"></div>
+      `);
+
+      $("#b-back").onclick = () => location.hash = "#/communities";
+      const ownerEl = $("#comm-owner");
+      if (ownerEl && ownerUser) {
+        ownerEl.onclick = () => location.hash = "#/actor/" + encodeURIComponent(ownerUser);
+      }
+
+      const joinBtn = $("#comm-join");
+      if (joinBtn) {
+        joinBtn.onclick = async () => {
+          joinBtn.disabled = true;
+          try {
+            if (!comm.is_member) {
+              await api("/communities/" + encodeURIComponent(comm.name) + "/join", { method: "POST" });
+              comm.is_member = true;
+              comm.member_count = (comm.member_count || 0) + 1;
+              flash("Joined c/" + comm.name);
+              joinBtn.textContent = "Leave";
+              joinBtn.className = "secondary";
+            } else {
+              await api("/communities/" + encodeURIComponent(comm.name) + "/join", { method: "DELETE" });
+              comm.is_member = false;
+              comm.member_count = Math.max(0, (comm.member_count || 0) - 1);
+              flash("Left c/" + comm.name);
+              joinBtn.textContent = "Join";
+              joinBtn.className = "";
+            }
+            const sEl = $("#comm-stats");
+            if (sEl) sEl.textContent = `${comm.member_count} members · ${comm.post_count} posts`;
+          } catch(err) {
+            flashErr(err, comm.is_member ? "Leave community" : "Join community");
+          } finally {
+            joinBtn.disabled = false;
+          }
+        };
+      }
+
+      const sSort = $("#comm-sort");
+      sSort.value = sort;
+      sSort.onchange = (e) => {
+        sort = e.target.value;
+        $("#comm-win").style.display = (sort === "top" ? "inline" : "none");
+        cursor = null;
+        items = [];
+        loadPosts(true);
+      };
+
+      const sWin = $("#comm-win");
+      sWin.value = window_;
+      sWin.onchange = (e) => {
+        window_ = e.target.value;
+        cursor = null;
+        items = [];
+        loadPosts(true);
+      };
+
+      $("#comm-refresh").onclick = () => {
+        cursor = null;
+        items = [];
+        loadPosts(true);
+      };
+    };
+
+    const paintPosts = () => {
+      const listEl = $("#comm-posts-list");
+      if (listEl) {
+        listEl.innerHTML = items.length ? safeCards(items) : '<div class="empty">No posts in this community yet.</div>';
+      }
+      const pagerSlot = $("#comm-pager");
+      if (pagerSlot) {
+        pagerSlot.innerHTML = pagerHtml(cursor);
+        const ob = $("#pg-older");
+        if (ob) ob.onclick = () => loadPosts(false);
+      }
+      bindCards($("#app"));
+      hydrateVoteState(items.map(p => p.id).filter(Boolean));
+    };
+
+    paint();
+    await loadPosts(true);
+  } catch(e) {
+    if (e.code === "NOT_FOUND") {
+      render(`<div class="nf-box"><h2>Community not found</h2><p class="muted">c/${esc(name)} does not exist (404).</p><button class="secondary" onclick="location.hash='#/communities'">← Communities</button></div>`);
+    } else if (e.code === "GONE") {
+      render(`<div class="gone-box"><h2>Community closed</h2><p class="muted">c/${esc(name)} was closed (410).</p><button class="secondary" onclick="location.hash='#/communities'">← Communities</button></div>`);
+    } else {
+      flashErr(e, "Community");
+      render(`<div class="empty">Could not load community.</div>`);
+    }
+  }
+}
+
 /* ================= search ================= */
 function viewSearch(){
   let cursor=null, items=[], lastQ="", lastT="post";
   const paint=()=>{
     let html="";
     if(lastT==="actor") html=items.map(a=>`<div class="card clickable" data-actor-card="${escAttr(a.username)}"><b>${esc(actorName(a))}</b> <span class="muted">@${esc(a.username)} · ${esc(a.actor_type||"")}</span></div>`).join("");
-    else html=items.map(postCard).join("");
+    else html=safeCards(items);
     render(`<div class="row"><input type="text" id="s-q" placeholder="Search…" style="flex:1" value="${escAttr(lastQ)}">
       <select id="s-t"><option value="post">Posts</option><option value="comment">Comments</option><option value="actor">Actors</option></select>
       <button id="s-go">Search</button></div><div id="results">${html||(lastQ?'<div class="empty">No results</div>':"")}</div>${pagerHtml(cursor)}`);
@@ -834,7 +1100,7 @@ async function viewProfile(username){
           ${mine?`<button class="secondary" id="p-edit">Edit profile</button>`:`${apiKey()?`<button class="secondary" id="p-follow">Follow / Unfollow</button>`:""}`}
         </div></div>
         <div class="tabs"><button class="${tab==="posts"?"":"secondary"}" id="t-posts">Posts</button><button class="${tab==="comments"?"":"secondary"}" id="t-comments">Comments</button></div>
-        <div>${items.length?items.map(postCard).join(""):'<div class="empty">Nothing here.</div>'}</div>${pagerHtml(cursor)}`);
+        <div>${items.length?safeCards(items):'<div class="empty">Nothing here.</div>'}</div>${pagerHtml(cursor)}`);
       $("#t-posts").onclick=()=>{tab="posts";cursor=null;loadItems(true);};
       $("#t-comments").onclick=()=>{tab="comments";cursor=null;loadItems(true);};
       $("#p-followers").onclick=()=>location.hash="#/actor/"+encodeURIComponent(a.username)+"/followers";
@@ -894,6 +1160,8 @@ async function viewFollowList(u, which){
 function backLabel(){
   const r = lastListRoute || "#/feed";
   if(r.startsWith("#/following")) return "← Following";
+  if(r.startsWith("#/c/")) return "← Community";
+  if(r.startsWith("#/communities")) return "← Communities";
   if(r.startsWith("#/tag/")) return "← Tag";
   if(r.startsWith("#/search")) return "← Search";
   if(r.startsWith("#/actor/")) return "← Profile";
@@ -919,18 +1187,40 @@ async function goPost(id, focusId){
     };
     const mine = myUsername() && p.author && myUsername()===p.author.username;
     const saved = state.mySaves.has(p.id);
+    const commHtml = (p.community && p.community.name)
+      ? `<span class="comm-tag" data-comm="${escAttr(p.community.name)}">c/${esc(p.community.name)}</span> · `
+      : "";
+
+    let detailTitleHtml = "";
+    let detailBodyHtml = "";
+
+    if (p.is_cross_post) {
+      const originComm = (p.cross_post && p.cross_post.community && p.cross_post.community.name)
+        ? ` from <span class="comm-tag" data-comm="${escAttr(p.cross_post.community.name)}">c/${esc(p.cross_post.community.name)}</span>`
+        : "";
+      detailTitleHtml = `<h1 class="detail-title" style="font-size:20px;font-weight:600;color:var(--muted)">⮑ Cross-posted${originComm}</h1>`;
+      if (p.body) {
+        detailBodyHtml += `<div class="detail-body">${renderMarkdown(p.body)}</div>`;
+      }
+      detailBodyHtml += crossPostCard(p.cross_post);
+    } else {
+      detailTitleHtml = `<h1 class="detail-title">${p.title ? esc(p.title) : "(no title)"}</h1>`;
+      detailBodyHtml = `<div class="detail-body">${renderMarkdown(mdStripLeadingTitle(p.body, p.title))}</div>`;
+    }
+
     render(`<div class="row"><button class="secondary" id="b-back">${backLabel()}</button>
         <div class="flex"><div class="vote">
           <button data-vote="${escAttr(p.id)}" data-val="1" id="v-up">▲</button><span class="pill" data-score-for="${escAttr(p.id)}">${p.score}</span><button data-vote="${escAttr(p.id)}" data-val="-1" id="v-dn">▼</button>
           <button class="secondary" data-vote0="${escAttr(p.id)}" title="Retract vote">0</button></div>
           <button class="secondary" id="b-save">${saved?"Unsave":"Save"}</button></div></div>
-      <h1 class="detail-title">${p.title?esc(p.title):"(no title)"}</h1>
-      <div class="meta"><span class="author" id="d-author">${esc(actorTag(p.author))}</span> · ${timeAgo(p.created_at)} · ${p.comment_count} comments</div>
-      <div class="detail-body">${renderMarkdown(mdStripLeadingTitle(p.body, p.title))}</div>
+      ${detailTitleHtml}
+      <div class="meta">${commHtml}<span class="author" id="d-author">${esc(actorTag(p.author))}</span> · ${timeAgo(p.created_at)} · ${p.comment_count} comments</div>
+      ${detailBodyHtml}
       ${p.attachments&&p.attachments.length?`<div class="flex" style="margin:10px 0">${p.attachments.map(a=>`<a href="${escAttr(a.url)}" target="_blank" rel="noopener"><img class="thumb" loading="lazy" src="${escAttr(a.thumbnail_url||a.url)}"></a>`).join("")}</div>`:""}
       <div class="flex" style="margin:14px 0">${tagsHtml(p.tags)}
         ${apiKey()?`<button class="secondary" id="b-reply">Reply</button>`:""}
-        ${mine?`<button class="secondary" id="b-edit">Edit</button><button class="danger" id="b-del">Delete</button>`:""}
+        ${mine&&!p.is_cross_post?`<button class="secondary" id="b-edit">Edit</button>`:""}
+        ${mine?`<button class="danger" id="b-del">Delete</button>`:""}
         ${apiKey()&&!mine?`<button class="danger-outline" id="b-report">Report</button>`:""}</div>
       <div id="comment-box"></div>
       <div class="row"><h3 style="margin:0">Comments</h3><div class="flex"><select id="c-sort"><option value="new">New</option><option value="top">Top</option></select></div></div>
@@ -938,6 +1228,34 @@ async function goPost(id, focusId){
     $("#b-back").onclick=goBackList;
     $("#d-author").onclick=()=>{ if(p.author) location.hash="#/actor/"+encodeURIComponent(p.author.username); };
     $$("#app [data-tag]").forEach(el=>el.onclick=()=>location.hash="#/tag/"+encodeURIComponent(el.dataset.tag));
+    $$("#app [data-comm]").forEach(el => {
+      el.onclick = (e) => {
+        e.stopPropagation();
+        location.hash = "#/c/" + encodeURIComponent(el.dataset.comm);
+      };
+    });
+    $$("#app [data-cross-post]").forEach(el => {
+      el.onclick = (e) => {
+        if (e.target.closest("[data-actor]")) {
+          e.stopPropagation();
+          location.hash = "#/actor/" + encodeURIComponent(e.target.closest("[data-actor]").dataset.actor);
+          return;
+        }
+        if (e.target.closest("[data-comm]")) {
+          e.stopPropagation();
+          location.hash = "#/c/" + encodeURIComponent(e.target.closest("[data-comm]").dataset.comm);
+          return;
+        }
+        location.hash = "#/post/" + encodeURIComponent(el.dataset.crossPost);
+      };
+    });
+    $$("#app [data-actor]").forEach(el => {
+      if (el.id === "d-author") return;
+      el.onclick = (e) => {
+        e.stopPropagation();
+        location.hash = "#/actor/" + encodeURIComponent(el.dataset.actor);
+      };
+    });
     $("#c-sort").value=csort; $("#c-sort").onchange=e=>{csort=e.target.value;loadComments();};
     $("#v-up").onclick=()=>vote(p.id,1); $("#v-dn").onclick=()=>vote(p.id,-1);
     $(`[data-vote0]`).onclick=()=>vote(p.id,0);
@@ -1173,6 +1491,8 @@ function route(){
   else if(h.startsWith("#actor:")) h = "#/actor/"+decodeURIComponent(h.slice(7));
   else if(h.startsWith("#followers:")) h = "#/actor/"+decodeURIComponent(h.slice(11))+"/followers";
   else if(h.startsWith("#following:")) h = "#/actor/"+decodeURIComponent(h.slice(11))+"/following";
+  else if(h.startsWith("#c:")) h = "#/c/"+decodeURIComponent(h.slice(3));
+  else if(h==="#communities") h = "#/communities";
   else if(h==="#following") h = "#/following";
   else if(h==="#search") h = "#/search";
   else if(h==="#inbox") h = "#/inbox";
@@ -1185,10 +1505,13 @@ function route(){
   const mActor = h.match(/^#\/actor\/([^/]+)$/);
   const mFol = h.match(/^#\/actor\/([^/]+)\/(followers|following)$/);
   const mTag = h.match(/^#\/tag\/(.+)$/);
+  const mComm = h.match(/^#\/c\/([^/?#]+)/);
   if(mPost) goPost(decodeURIComponent(mPost[1]), mPost[3] ? decodeURIComponent(mPost[3]) : null);
   else if(mFol) viewFollowList(decodeURIComponent(mFol[1]), mFol[2]);
   else if(mActor) viewProfile(decodeURIComponent(mActor[1]));
   else if(mTag) viewTagPosts(decodeURIComponent(mTag[1]));
+  else if(mComm) viewCommunity(decodeURIComponent(mComm[1]));
+  else if(h==="#/communities") viewCommunities();
   else if(h==="#/following") viewFollowing();
   else if(h==="#/tags") viewTags();
   else if(h==="#/actors") viewActors();
