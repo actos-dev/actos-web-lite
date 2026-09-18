@@ -153,6 +153,16 @@ function setKey(k){ if(k) localStorage.setItem(LS_KEY,k); else localStorage.remo
 function whoamiCache(){ try{ return JSON.parse(localStorage.getItem(LS_WHO)||"null"); }catch(e){ return null; } }
 function setWhoami(w){ if(w) localStorage.setItem(LS_WHO,JSON.stringify(w)); else localStorage.removeItem(LS_WHO); }
 function myUsername(){ const w = whoamiCache(); return w && w.actor ? w.actor.username : null; }
+function hasPermission(permissionName, communityName){
+  const w = whoamiCache();
+  if(!w || !Array.isArray(w.permissions)) return false;
+  return w.permissions.some(p => {
+    if(p.permission !== permissionName) return false;
+    if(p.scope === "global") return true;
+    if(communityName && p.scope === "community" && p.community === communityName) return true;
+    return false;
+  });
+}
 function uuid(){ return (crypto.randomUUID ? crypto.randomUUID() : "xxxxxxxx-xxxx-4xxx-xxxx-xxxxxxxxxxxx".replace(/x/g,()=>(Math.random()*16|0).toString(16))); }
 
 /* ================= utils ================= */
@@ -416,12 +426,24 @@ function openAuthModal(tab){
   const permList = (w && w.permissions && w.permissions.length)
     ? w.permissions.map(p => p.scope === "community" && p.community ? `${p.permission}@${p.community}` : p.permission).join(", ")
     : "";
+  const hasGrant = hasPermission("role.grant");
+  const hasAnyPerm = w && Array.isArray(w.permissions) && w.permissions.length > 0;
+  const permBtnHtml = (hasGrant || hasAnyPerm)
+    ? `<button class="secondary" id="m-perms">Manage permissions</button>`
+    : "";
+  const hasBanPerm = hasPermission("member.ban") || (w && Array.isArray(w.permissions) && w.permissions.some(p => p.permission === "member.ban"));
+  const banBtnHtml = hasBanPerm ? `<button class="secondary" id="m-bans">Manage bans</button>` : "";
+  const hasReportPerm = hasPermission("report.view") || (w && Array.isArray(w.permissions) && w.permissions.some(p => p.permission === "report.view"));
+  const repBtnHtml = hasReportPerm ? `<button class="secondary" id="m-reports">Moderation queue</button>` : "";
   const acct = w && w.actor ? `
     <div class="card"><p class="title">${esc(actorName(w.actor))} <span class="muted">@${esc(w.actor.username)}</span></p>
     <div class="meta">${esc(w.actor.actor_type||"")}${permList ? " · permissions: " + esc(permList) : ""}</div></div>
-    <div class="flex"><button class="secondary" id="m-profile">My profile</button>
+    <div class="flex" style="flex-wrap:wrap;gap:6px"><button class="secondary" id="m-profile">My profile</button>
     <button class="secondary" id="m-invites">Invitations</button>
     <button class="secondary" id="m-keys">API keys</button>
+    ${permBtnHtml}
+    ${banBtnHtml}
+    ${repBtnHtml}
     <button class="danger" id="m-logout">Sign out</button></div>`
     : `<p class="muted">No verified identity yet. Paste a key below or register.</p>`;
   openModal(`
@@ -513,6 +535,9 @@ function openAuthModal(tab){
       flash(keys.length ? keys.length+" key(s) — revoke via CLI: actos auth keys" : "No extra keys");
     }catch(e){ flashErr(e,"Keys"); }
   };
+  const mp2=$("#m-perms"); if(mp2) mp2.onclick=()=>{ openPermissionsModal(); };
+  const mb=$("#m-bans"); if(mb) mb.onclick=()=>{ openBanModal(); };
+  const mr=$("#m-reports"); if(mr) mr.onclick=()=>{ openReportsModal(); };
 }
 function openSettings(){
   openModal(`<h2>Settings</h2>
@@ -931,6 +956,13 @@ async function viewCommunity(name){
     const paint = () => {
       const ownerUser = comm.owner ? comm.owner.username : "";
       const isPrivate = comm.visibility === "private";
+      const isOwner = comm.owner && myUsername() === comm.owner.username;
+      const canManage = isOwner ||
+        hasPermission("community.edit", comm.name) ||
+        hasPermission("member.approve", comm.name) ||
+        hasPermission("member.invite", comm.name) ||
+        hasPermission("member.kick", comm.name) ||
+        hasPermission("community.close", comm.name);
       const visBadge = `<span class="pill" style="border:1px solid var(--border);border-radius:10px;padding:1px 8px;font-size:12px">${isPrivate ? "private" : "public"}</span>`;
 
       const joinBtnHtml = apiKey()
@@ -941,12 +973,17 @@ async function viewCommunity(name){
         ? `<button id="comm-post-btn">+ Post in c/${esc(comm.name)}</button>`
         : "";
 
+      const manageBtnHtml = canManage
+        ? `<button class="secondary" id="comm-manage-btn">⚙ Settings</button>`
+        : "";
+
       render(`
         <div class="row">
           <button class="secondary" id="b-back">← Communities</button>
           <div class="flex">
             ${postBtnHtml}
             ${joinBtnHtml}
+            ${manageBtnHtml}
           </div>
         </div>
         <div class="card" style="margin-bottom:16px">
@@ -989,6 +1026,11 @@ async function viewCommunity(name){
       const postBtn = $("#comm-post-btn");
       if (postBtn) {
         postBtn.onclick = () => openComposer(null, { community: comm.name });
+      }
+
+      const manageBtn = $("#comm-manage-btn");
+      if (manageBtn) {
+        manageBtn.onclick = () => openCommunitySettings(comm, null, () => paint());
       }
 
       const joinBtn = $("#comm-join");
@@ -1075,10 +1117,18 @@ async function viewCommunity(name){
 
 function renderCommunityCover(comm){
   const ownerUser = comm.owner ? comm.owner.username : "";
+  const isOwner = comm.owner && myUsername() === comm.owner.username;
+  const canManage = isOwner ||
+    hasPermission("community.edit", comm.name) ||
+    hasPermission("member.approve", comm.name) ||
+    hasPermission("member.invite", comm.name) ||
+    hasPermission("member.kick", comm.name) ||
+    hasPermission("community.close", comm.name);
   const auth = !!apiKey();
   render(`
     <div class="row">
       <button class="secondary" id="b-back">← Communities</button>
+      ${canManage ? `<div class="flex"><button class="secondary" id="comm-cover-manage-btn">⚙ Settings</button></div>` : ""}
     </div>
     <div class="card" style="margin-bottom:16px">
       <div class="row" style="margin-bottom:6px">
@@ -1110,6 +1160,8 @@ function renderCommunityCover(comm){
   `);
 
   $("#b-back").onclick = () => location.hash = "#/communities";
+  const cmb = $("#comm-cover-manage-btn");
+  if (cmb) cmb.onclick = () => openCommunitySettings(comm, null, () => viewCommunity(comm.name));
   const ownerEl = $("#comm-owner");
   if (ownerEl && ownerUser) {
     ownerEl.onclick = () => location.hash = "#/actor/" + encodeURIComponent(ownerUser);
@@ -1410,6 +1462,7 @@ async function viewProfile(username){
       }catch(e){ flashErr(e,"Profile items"); }
     };
     const paint=()=>{
+      const canBanActor = apiKey() && !mine && (hasPermission("member.ban") || (w && Array.isArray(w.permissions) && w.permissions.some(p => p.permission === "member.ban")));
       render(`<div class="card"><p class="title">${esc(actorName(a))} <span class="muted">@${esc(a.username)}</span></p>
         <div class="meta">${esc(a.actor_type||"")} · joined ${timeAgo(a.created_at)}</div>
         ${a.bio?`<div class="body">${esc(a.bio)}</div>`:""}
@@ -1418,6 +1471,7 @@ async function viewProfile(username){
           <button class="secondary" id="p-followers">Followers</button>
           <button class="secondary" id="p-following">Following</button>
           ${mine?`<button class="secondary" id="p-edit">Edit profile</button>`:`${apiKey()?`<button class="secondary" id="p-follow">Follow / Unfollow</button>`:""}`}
+          ${canBanActor?`<button class="danger-outline" id="p-ban">Ban actor</button>`:""}
         </div></div>
         <div class="tabs"><button class="${tab==="posts"?"":"secondary"}" id="t-posts">Posts</button><button class="${tab==="comments"?"":"secondary"}" id="t-comments">Comments</button></div>
         <div>${items.length?safeCards(items):'<div class="empty">Nothing here.</div>'}</div>${pagerHtml(cursor)}`);
@@ -1428,6 +1482,7 @@ async function viewProfile(username){
       const ob=$("#pg-older"); if(ob)ob.onclick=()=>loadItems(false);
       const fl=$("#p-follow"); if(fl) fl.onclick=()=>toggleFollow(a.username);
       const ed=$("#p-edit"); if(ed) ed.onclick=()=>openProfileEdit(a);
+      const pb=$("#p-ban"); if(pb) pb.onclick=()=>openBanModal(a.username);
       bindCards($("#app")); hydrateVoteState(items.map(p=>p.id).filter(Boolean));
     };
     await loadItems(true);
@@ -1499,14 +1554,16 @@ async function goPost(id, focusId){
   try{
     const p = await api("/posts/"+encodeURIComponent(id));
     let csort="new";
+    const commName = p.community ? p.community.name : null;
     const loadComments=async()=>{
       try{
         const c=await api("/posts/"+encodeURIComponent(id)+"/comments?sort="+csort+"&depth=20&body_html=true");
-        $("#comments").innerHTML=renderTree(c.comments||[], id);
-        bindCommentOps(id);
+        $("#comments").innerHTML=renderTree(c.comments||[], id, commName);
+        bindCommentOps(id, commName);
       }catch(e){ $("#comments").innerHTML='<div class="empty">Could not load comments.</div>'; }
     };
     const mine = myUsername() && p.author && myUsername()===p.author.username;
+    const canModDel = !mine && hasPermission("content.delete", commName);
     const saved = state.mySaves.has(p.id);
     const commHtml = (p.community && p.community.name)
       ? `<span class="comm-tag" data-comm="${escAttr(p.community.name)}">c/${esc(p.community.name)}</span> · `
@@ -1543,6 +1600,7 @@ async function goPost(id, focusId){
         ${apiKey()&&!p.is_cross_post&&p.content_type!=="comment"?`<button class="secondary" id="b-crosspost">⮑ Cross-post</button>`:""}
         ${mine&&!p.is_cross_post?`<button class="secondary" id="b-edit">Edit</button>`:""}
         ${mine?`<button class="danger" id="b-del">Delete</button>`:""}
+        ${canModDel?`<button class="danger-outline" id="b-mod-del">Mod delete</button>`:""}
         ${apiKey()&&!mine?`<button class="danger-outline" id="b-report">Report</button>`:""}</div>
       <div id="comment-box"></div>
       <div class="row"><h3 style="margin:0">Comments</h3><div class="flex"><select id="c-sort"><option value="new">New</option><option value="top">Top</option></select></div></div>
@@ -1593,7 +1651,8 @@ async function goPost(id, focusId){
     });
     const ed=$("#b-edit"); if(ed)ed.onclick=()=>openComposer(p);
     const del=$("#b-del"); if(del)del.onclick=()=>confirmDeletePost(p.id);
-    const rep=$("#b-report"); if(rep)rep.onclick=()=>openReport("post",p.id);
+    const modDel=$("#b-mod-del"); if(modDel)modDel.onclick=()=>confirmModerateDelete(p.id, "post", ()=>{ location.hash="#/feed"; });
+    const rep=$("#b-report"); if(rep)rep.onclick=()=>openReport("post",p.id,commName);
     hydrateVoteState([p.id]);
     await loadComments();
     if (focusId) focusComment(focusId);
@@ -1610,10 +1669,11 @@ function focusComment(cid){
   el.scrollIntoView({behavior:"smooth", block:"center"});
   setTimeout(()=>el.classList.remove("focused"), 4000);
 }
-function renderTree(nodes, postId){
+function renderTree(nodes, postId, commName){
   if(!nodes||!nodes.length) return '<div class="empty">No comments — start the discussion.</div>';
   return nodes.map(n=>{
     const mine = myUsername() && n.author && myUsername()===n.author.username;
+    const canModDelComment = !mine && !n.deleted && hasPermission("content.delete", commName);
     const body = n.deleted ? '<span class="deleted">[deleted]</span>' : renderMarkdown(n.body);
     return `<div class="comment" data-cid="${escAttr(n.id)}">
       <div class="meta"><span class="author" data-cactor="${escAttr(n.author?n.author.username:"")}">${esc(actorTag(n.author))}</span> · ${timeAgo(n.created_at)} · ▲ <span data-score-for="${escAttr(n.id)}">${n.score}</span></div>
@@ -1623,13 +1683,15 @@ function renderTree(nodes, postId){
         <span style="display:inline-flex;gap:4px"><button class="ops-link" data-cvote="${escAttr(n.id)}" data-val="1">▲</button><button class="ops-link" data-cvote="${escAttr(n.id)}" data-val="-1">▼</button></span>
         ${apiKey()&&!n.deleted?`<button class="ops-link" data-creply="${escAttr(n.id)}">reply</button>`:""}
         ${mine&&!n.deleted?`<button class="ops-link" data-cedit="${escAttr(n.id)}">edit</button><button class="ops-link" data-cdel="${escAttr(n.id)}">delete</button>`:""}
+        ${apiKey()&&!mine&&!n.deleted?`<button class="ops-link" data-creport="${escAttr(n.id)}">report</button>`:""}
+        ${canModDelComment?`<button class="ops-link" data-cmod-del="${escAttr(n.id)}">mod delete</button>`:""}
       </div>
       <div class="c-edit-slot"></div>
-      ${(n.replies&&n.replies.length)?'<div class="child">'+renderTree(n.replies,postId)+"</div>":""}
+      ${(n.replies&&n.replies.length)?'<div class="child">'+renderTree(n.replies,postId,commName)+"</div>":""}
     </div>`;
   }).join("");
 }
-function bindCommentOps(postId){
+function bindCommentOps(postId, commName){
   $$("#comments [data-cactor]").forEach(el=>{ if(el.dataset.cactor) el.onclick=()=>location.hash="#/actor/"+encodeURIComponent(el.dataset.cactor); });
   $$("#comments [data-cvote]").forEach(b=>b.onclick=()=>vote(b.dataset.cvote,Number(b.dataset.val)));
   $$("#comments [data-creply]").forEach(b=>b.onclick=()=>commentBox(postId,b.dataset.creply));
@@ -1649,6 +1711,8 @@ function bindCommentOps(postId){
     try{ await api("/comments/"+b.dataset.cdel,{method:"DELETE"}); flash("Comment deleted"); goPost(postId); }
     catch(e){ flashErr(e,"Delete comment"); }
   });
+  $$("#comments [data-creport]").forEach(b=>b.onclick=()=>openReport("comment",b.dataset.creport,commName));
+  $$("#comments [data-cmod-del]").forEach(b=>b.onclick=()=>confirmModerateDelete(b.dataset.cmodDel,"comment",()=>goPost(postId)));
   hydrateVoteState($$("#comments [data-cid]").map(el=>el.dataset.cid));
 }
 function commentBox(postId, parentId){
@@ -1916,20 +1980,659 @@ function openComposer(editPost, opts){
     }
   };
 }
+/* ================= moderation & administration ================= */
+function openCommunitySettings(comm, initialTab, onUpdate){
+  const isOwner = comm.owner && myUsername() === comm.owner.username;
+  const canEdit = isOwner || hasPermission("community.edit", comm.name);
+  const canClose = isOwner || hasPermission("community.close", comm.name);
+  const canInvite = isOwner || hasPermission("member.invite", comm.name);
+  const canKick = isOwner || hasPermission("member.kick", comm.name);
+  const canBan = isOwner || hasPermission("member.ban", comm.name);
+  const canApprove = isOwner || hasPermission("member.approve", comm.name);
+  const isPrivate = comm.visibility === "private";
+
+  let tab = initialTab;
+  if (!tab) {
+    if (canEdit || canClose || isOwner) tab = "settings";
+    else if (canKick || canInvite) tab = "members";
+    else if (canApprove && isPrivate) tab = "applications";
+    else tab = "settings";
+  }
+
+  openModal(`
+    <h2>Manage c/${esc(comm.name)}</h2>
+    <div class="tabs">
+      <button class="${tab==="settings"?"":"secondary"}" id="cs-tab-settings">Settings</button>
+      <button class="${tab==="members"?"":"secondary"}" id="cs-tab-members">Members</button>
+      ${isPrivate ? `<button class="${tab==="applications"?"":"secondary"}" id="cs-tab-apps">Applications</button>` : ""}
+    </div>
+
+    <!-- Tab 1: Settings -->
+    <div id="cs-view-settings" style="display:${tab==="settings"?"block":"none"}">
+      <label for="cs-desc">Description</label>
+      <textarea id="cs-desc" rows="4" placeholder="Community description...">${esc(comm.description||"")}</textarea>
+      <div style="margin-top:8px">
+        <button id="cs-save-desc">Save description</button>
+      </div>
+
+      <div style="margin-top:16px;border-top:1px solid var(--border);padding-top:12px">
+        <label>Visibility</label>
+        ${comm.visibility === "public" ? `
+          <div style="margin-bottom:8px">Current: <b>Public</b> (anyone can view, members can post)</div>
+          <div class="muted" style="margin-bottom:8px;color:#f85149">⚠️ Irreversible: private communities cannot be made public again</div>
+          <button class="secondary" id="cs-btn-private">Make private</button>
+        ` : `
+          <div class="muted" style="margin-bottom:8px">Current: <b>Private</b> (unlisted, membership by invitation or application only). Private communities cannot be made public again.</div>
+        `}
+      </div>
+
+      ${isOwner ? `
+        <div style="margin-top:16px;border-top:1px solid var(--border);padding-top:12px">
+          <label for="cs-successor-u">Designated successor</label>
+          <div class="meta" style="margin-bottom:6px">The successor inherits the community when you leave or delete your account.</div>
+          <div class="flex">
+            <input type="text" id="cs-successor-u" placeholder="username" style="flex:1">
+            <button id="cs-save-successor">Set successor</button>
+          </div>
+        </div>
+      ` : ""}
+
+      ${canClose ? `
+        <div style="margin-top:16px;border-top:1px solid var(--border);padding-top:12px">
+          <label style="color:var(--danger)">Danger zone</label>
+          <div class="muted" style="margin-bottom:8px">Closing a community is permanent. Public posts become independent; private posts are deleted.</div>
+          <button class="danger" id="cs-btn-close">Close community</button>
+        </div>
+      ` : ""}
+    </div>
+
+    <!-- Tab 2: Members & Invitations -->
+    <div id="cs-view-members" style="display:${tab==="members"?"block":"none"}">
+      ${(isPrivate && canInvite) ? `
+        <div style="margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--border)">
+          <label for="inv-user">Invite member</label>
+          <div class="flex">
+            <input type="text" id="inv-user" placeholder="username" style="flex:1">
+            <button id="b-send-inv">Send invite</button>
+          </div>
+        </div>
+      ` : ""}
+      <label>Members</label>
+      <div id="cs-members-list"><div class="loading">Loading members…</div></div>
+    </div>
+
+    <!-- Tab 3: Applications Queue -->
+    ${isPrivate ? `
+      <div id="cs-view-apps" style="display:${tab==="applications"?"block":"none"}">
+        <label>Membership applications</label>
+        <div id="cs-apps-list"><div class="loading">Loading applications…</div></div>
+      </div>
+    ` : ""}
+
+    <div class="flex" style="margin-top:16px;border-top:1px solid var(--border);padding-top:12px">
+      <button class="secondary" id="cs-btn-done">Done</button>
+    </div>
+  `);
+
+  $("#cs-tab-settings").onclick = () => openCommunitySettings(comm, "settings", onUpdate);
+  $("#cs-tab-members").onclick = () => openCommunitySettings(comm, "members", onUpdate);
+  const tabApps = $("#cs-tab-apps");
+  if (tabApps) tabApps.onclick = () => openCommunitySettings(comm, "applications", onUpdate);
+  $("#cs-btn-done").onclick = closeModal;
+
+  // Settings handlers
+  const saveDescBtn = $("#cs-save-desc");
+  if (saveDescBtn) {
+    saveDescBtn.onclick = async () => {
+      const desc = $("#cs-desc").value;
+      saveDescBtn.disabled = true;
+      try {
+        await api("/communities/" + encodeURIComponent(comm.name), {
+          method: "PATCH",
+          body: { description: desc }
+        });
+        comm.description = desc;
+        flash("Description updated");
+        if (onUpdate) onUpdate();
+      } catch(e) {
+        flashErr(e, "Save description");
+      } finally {
+        saveDescBtn.disabled = false;
+      }
+    };
+  }
+
+  const btnPrivate = $("#cs-btn-private");
+  if (btnPrivate) {
+    btnPrivate.onclick = async () => {
+      if (!confirm("Are you sure you want to make c/" + comm.name + " private?\nIrreversible: private communities cannot be made public again.")) return;
+      btnPrivate.disabled = true;
+      try {
+        await api("/communities/" + encodeURIComponent(comm.name), {
+          method: "PATCH",
+          body: { visibility: "private" }
+        });
+        comm.visibility = "private";
+        flash("Community is now private");
+        if (onUpdate) onUpdate();
+        openCommunitySettings(comm, "settings", onUpdate);
+      } catch(e) {
+        flashErr(e, "Make private");
+        btnPrivate.disabled = false;
+      }
+    };
+  }
+
+  const saveSuccBtn = $("#cs-save-successor");
+  if (saveSuccBtn) {
+    saveSuccBtn.onclick = async () => {
+      const u = $("#cs-successor-u").value.trim();
+      if (!u) { flash("Username required", false); return; }
+      saveSuccBtn.disabled = true;
+      try {
+        await api("/communities/" + encodeURIComponent(comm.name) + "/successor", {
+          method: "PUT",
+          body: { username: u }
+        });
+        flash("Successor set to @" + u);
+        $("#cs-successor-u").value = "";
+      } catch(e) {
+        flashErr(e, "Set successor");
+      } finally {
+        saveSuccBtn.disabled = false;
+      }
+    };
+  }
+
+  const closeCommBtn = $("#cs-btn-close");
+  if (closeCommBtn) {
+    closeCommBtn.onclick = async () => {
+      if (!confirm("Are you sure you want to permanently close c/" + comm.name + "?\nThis action cannot be undone.")) return;
+      closeCommBtn.disabled = true;
+      try {
+        await api("/communities/" + encodeURIComponent(comm.name) + "/close", { method: "POST" });
+        closeModal();
+        flash("Community c/" + comm.name + " closed");
+        location.hash = "#/communities";
+      } catch(e) {
+        flashErr(e, "Close community");
+        closeCommBtn.disabled = false;
+      }
+    };
+  }
+
+  // Members & Invitations handlers
+  if (tab === "members") {
+    const sendInvBtn = $("#b-send-inv");
+    if (sendInvBtn) {
+      sendInvBtn.onclick = async () => {
+        const u = $("#inv-user").value.trim();
+        if (!u) { flash("Username required", false); return; }
+        sendInvBtn.disabled = true;
+        try {
+          await api("/communities/" + encodeURIComponent(comm.name) + "/invitations", {
+            method: "POST",
+            body: { username: u }
+          });
+          flash("Invitation sent to @" + u);
+          $("#inv-user").value = "";
+        } catch(e) {
+          flashErr(e, "Send invite");
+        } finally {
+          sendInvBtn.disabled = false;
+        }
+      };
+    }
+
+    const loadMembers = async () => {
+      const listEl = $("#cs-members-list");
+      if (!listEl) return;
+      try {
+        const d = await api("/communities/" + encodeURIComponent(comm.name) + "/members");
+        const members = d.members || [];
+        if (!members.length) {
+          listEl.innerHTML = '<div class="empty">No members found.</div>';
+          return;
+        }
+        listEl.innerHTML = members.map(m => {
+          const u = m.actor.username;
+          const isCommOwner = comm.owner && u === comm.owner.username;
+          const kickBtn = (canKick && !isCommOwner)
+            ? `<button class="danger-outline btn-kick" data-user="${escAttr(u)}" style="padding:2px 8px;font-size:12px">Kick</button>`
+            : "";
+          const banBtn = (canBan && !isCommOwner)
+            ? `<button class="danger-outline btn-ban-m" data-user="${escAttr(u)}" style="padding:2px 8px;font-size:12px">Ban</button>`
+            : "";
+          return `
+            <div class="card" style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;margin-bottom:6px">
+              <div>
+                <b class="author" data-actor="${escAttr(u)}">@${esc(u)}</b>
+                ${m.actor.display_name ? `<span class="muted"> (${esc(m.actor.display_name)})</span>` : ""}
+                ${isCommOwner ? `<span class="pill" style="border:1px solid var(--border);border-radius:10px;padding:1px 6px;font-size:11px">owner</span>` : ""}
+                <div class="meta" style="margin-top:2px">Joined ${timeAgo(m.joined_at)}</div>
+              </div>
+              <div class="flex" style="gap:4px">
+                ${banBtn}
+                ${kickBtn}
+              </div>
+            </div>
+          `;
+        }).join("");
+
+        $$("#cs-members-list [data-actor]").forEach(el => {
+          el.onclick = () => { closeModal(); location.hash = "#/actor/" + encodeURIComponent(el.dataset.actor); };
+        });
+        $$("#cs-members-list .btn-kick").forEach(b => {
+          b.onclick = async () => {
+            const u = b.dataset.user;
+            if (!confirm("Kick @" + u + " from c/" + comm.name + "?")) return;
+            b.disabled = true;
+            try {
+              await api("/communities/" + encodeURIComponent(comm.name) + "/members/" + encodeURIComponent(u), { method: "DELETE" });
+              flash("Kicked @" + u);
+              comm.member_count = Math.max(0, (comm.member_count || 1) - 1);
+              if (onUpdate) onUpdate();
+              loadMembers();
+            } catch(e) {
+              flashErr(e, "Kick member");
+              b.disabled = false;
+            }
+          };
+        });
+        $$("#cs-members-list .btn-ban-m").forEach(b => {
+          b.onclick = () => {
+            openBanModal(b.dataset.user, comm.name);
+          };
+        });
+      } catch(e) {
+        flashErr(e, "Load members");
+        listEl.innerHTML = '<div class="empty">Could not load members.</div>';
+      }
+    };
+    loadMembers();
+  }
+
+  // Applications Queue handlers
+  if (tab === "applications" && isPrivate) {
+    const loadApps = async () => {
+      const listEl = $("#cs-apps-list");
+      if (!listEl) return;
+      try {
+        const d = await api("/communities/" + encodeURIComponent(comm.name) + "/applications");
+        const apps = (d.applications || []).filter(a => a.status === "pending");
+        if (!apps.length) {
+          listEl.innerHTML = '<div class="empty">No pending applications.</div>';
+          return;
+        }
+        listEl.innerHTML = apps.map(a => `
+          <div class="card" style="margin-bottom:8px;padding:10px">
+            <div class="row" style="margin-bottom:4px">
+              <div>
+                <b>@${esc(a.applicant.username)}</b>
+                ${a.applicant.display_name ? `<span class="muted"> (${esc(a.applicant.display_name)})</span>` : ""}
+              </div>
+              <span class="meta">${timeAgo(a.created_at)}</span>
+            </div>
+            <div class="body" style="margin:6px 0;background:#161b22;padding:6px 10px;border-radius:4px;font-size:13px;white-space:pre-wrap">${esc(a.reason)}</div>
+            <div class="flex" style="margin-top:8px">
+              <button class="btn-app-accept" data-appid="${escAttr(a.id)}">Accept</button>
+              <button class="secondary btn-app-reject" data-appid="${escAttr(a.id)}">Reject</button>
+            </div>
+          </div>
+        `).join("");
+
+        $$("#cs-apps-list .btn-app-accept").forEach(b => {
+          b.onclick = async () => {
+            b.disabled = true;
+            try {
+              await api("/communities/" + encodeURIComponent(comm.name) + "/applications/" + encodeURIComponent(b.dataset.appid) + "/accept", { method: "POST" });
+              flash("Application accepted");
+              comm.member_count = (comm.member_count || 0) + 1;
+              if (onUpdate) onUpdate();
+              loadApps();
+            } catch(e) {
+              flashErr(e, "Accept application");
+              b.disabled = false;
+            }
+          };
+        });
+        $$("#cs-apps-list .btn-app-reject").forEach(b => {
+          b.onclick = async () => {
+            b.disabled = true;
+            try {
+              await api("/communities/" + encodeURIComponent(comm.name) + "/applications/" + encodeURIComponent(b.dataset.appid) + "/reject", { method: "POST" });
+              flash("Application rejected");
+              loadApps();
+            } catch(e) {
+              flashErr(e, "Reject application");
+              b.disabled = false;
+            }
+          };
+        });
+      } catch(e) {
+        flashErr(e, "Load applications");
+        listEl.innerHTML = '<div class="empty">Could not load applications.</div>';
+      }
+    };
+    loadApps();
+  }
+}
+
+function openPermissionsModal(defaultUser, defaultComm){
+  const userVal = defaultUser || "";
+  const commVal = defaultComm || "";
+  openModal(`
+    <h2>Manage permissions</h2>
+    <p class="muted">Grant or revoke scoped permissions for actors. Global grants require global role.grant; community grants require role.grant for that community.</p>
+
+    <label for="p-uname">Username</label>
+    <input type="text" id="p-uname" placeholder="username" style="width:100%" value="${escAttr(userVal)}">
+
+    <label for="p-perm" style="margin-top:10px">Permission</label>
+    <select id="p-perm" style="width:100%">
+      <option value="content.delete">content.delete — delete posts &amp; comments</option>
+      <option value="community.edit">community.edit — edit description &amp; visibility</option>
+      <option value="community.close">community.close — close community</option>
+      <option value="member.invite">member.invite — invite to private community</option>
+      <option value="member.approve">member.approve — approve applications</option>
+      <option value="member.kick">member.kick — kick members</option>
+      <option value="member.ban">member.ban — ban actors</option>
+      <option value="role.grant">role.grant — grant or revoke permissions</option>
+      <option value="report.view">report.view — view reports queue</option>
+      <option value="report.resolve">report.resolve — resolve reports</option>
+      <option value="audit.view">audit.view — view audit trail (global only)</option>
+    </select>
+
+    <label for="p-comm" style="margin-top:10px">Community (optional)</label>
+    <input type="text" id="p-comm" placeholder="e.g. rust-lang (blank for global grant)" style="width:100%" value="${escAttr(commVal)}">
+    <div class="meta" style="margin-top:4px">Leave blank for global grant. Note: member.invite, member.approve, and member.kick are community-only; audit.view is global-only.</div>
+
+    <div class="flex" style="margin-top:16px;flex-wrap:wrap;gap:6px">
+      <button id="p-grant-btn">Grant permission</button>
+      <button class="danger-outline" id="p-revoke-btn">Revoke permission</button>
+      <button class="secondary" id="p-goto-bans">Bans →</button>
+      <button class="secondary" id="p-close-btn">Close</button>
+    </div>
+  `);
+
+  $("#p-close-btn").onclick = closeModal;
+  const gb = $("#p-goto-bans");
+  if (gb) gb.onclick = () => openBanModal($("#p-uname").value.trim(), $("#p-comm").value.trim());
+
+  $("#p-grant-btn").onclick = async () => {
+    const username = $("#p-uname").value.trim();
+    const permission = $("#p-perm").value;
+    const community = $("#p-comm").value.trim() || null;
+    if (!username) { flash("Username required", false); return; }
+
+    const btn = $("#p-grant-btn");
+    btn.disabled = true;
+    try {
+      await api("/admin/permissions", {
+        method: "PUT",
+        body: { username, permission, community }
+      });
+      flash(`Granted ${permission}${community ? ` @ ${community}` : " (global)"} to @${username}`);
+      if (username === myUsername()) await ensureIdentity();
+    } catch(e) {
+      flashErr(e, "Grant permission");
+    } finally {
+      btn.disabled = false;
+    }
+  };
+
+  $("#p-revoke-btn").onclick = async () => {
+    const username = $("#p-uname").value.trim();
+    const permission = $("#p-perm").value;
+    const community = $("#p-comm").value.trim() || null;
+    if (!username) { flash("Username required", false); return; }
+
+    if (!confirm(`Revoke ${permission}${community ? ` @ ${community}` : " (global)"} from @${username}?`)) return;
+
+    const btn = $("#p-revoke-btn");
+    btn.disabled = true;
+    try {
+      await api("/admin/permissions", {
+        method: "DELETE",
+        body: { username, permission, community }
+      });
+      flash(`Revoked ${permission}${community ? ` @ ${community}` : " (global)"} from @${username}`);
+      if (username === myUsername()) await ensureIdentity();
+    } catch(e) {
+      flashErr(e, "Revoke permission");
+    } finally {
+      btn.disabled = false;
+    }
+  };
+}
+
+function openBanModal(defaultUsername, defaultCommunity){
+  openModal(`
+    <h2>Ban actor</h2>
+    <p class="muted">Bans prevent an actor from posting or commenting. A community ban restricts them within that community; a platform-wide ban restricts them everywhere.</p>
+
+    <label for="bm-user">Username</label>
+    <input type="text" id="bm-user" placeholder="username" style="width:100%" value="${escAttr(defaultUsername||"")}">
+
+    <label for="bm-comm" style="margin-top:10px">Community (optional)</label>
+    <input type="text" id="bm-comm" placeholder="e.g. rust-lang (blank for platform-wide ban)" style="width:100%" value="${escAttr(defaultCommunity||"")}">
+
+    <label for="bm-reason" style="margin-top:10px">Reason</label>
+    <textarea id="bm-reason" rows="3" placeholder="Reason for the ban (required)"></textarea>
+
+    <div style="margin-top:10px">
+      <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer">
+        <input type="checkbox" id="bm-del-posts"> Also delete actor's posts in this community (only valid with community)
+      </label>
+    </div>
+
+    <div class="flex" style="margin-top:16px;flex-wrap:wrap;gap:6px">
+      <button class="danger" id="bm-ban-btn">Ban actor</button>
+      <button class="secondary" id="bm-unban-btn">Remove ban</button>
+      <button class="secondary" id="bm-cancel-btn">Cancel</button>
+    </div>
+  `);
+
+  $("#bm-cancel-btn").onclick = closeModal;
+
+  $("#bm-ban-btn").onclick = async () => {
+    const username = $("#bm-user").value.trim();
+    const community = $("#bm-comm").value.trim() || null;
+    const reason = $("#bm-reason").value.trim();
+    const delete_posts = $("#bm-del-posts").checked;
+
+    if (!username) { flash("Username required", false); return; }
+    if (!reason) { flash("Reason required", false); return; }
+    if (delete_posts && !community) {
+      flash("Deleting posts is only allowed with a community-scoped ban", false);
+      return;
+    }
+
+    const btn = $("#bm-ban-btn");
+    btn.disabled = true;
+    try {
+      const body = { username, reason };
+      if (community) body.community = community;
+      if (community && delete_posts) body.delete_posts = true;
+
+      await api("/admin/bans", { method: "POST", body });
+      flash(`Banned @${username}${community ? ` from c/${community}` : " globally"}`);
+      closeModal();
+    } catch(e) {
+      flashErr(e, "Ban actor");
+      btn.disabled = false;
+    }
+  };
+
+  $("#bm-unban-btn").onclick = async () => {
+    const username = $("#bm-user").value.trim();
+    const community = $("#bm-comm").value.trim() || null;
+    if (!username) { flash("Username required", false); return; }
+
+    if (!confirm(`Remove ban for @${username}${community ? ` in c/${community}` : " (globally)"}?`)) return;
+
+    const btn = $("#bm-unban-btn");
+    btn.disabled = true;
+    try {
+      const q = community ? `?community=${encodeURIComponent(community)}` : "";
+      await api(`/admin/bans/${encodeURIComponent(username)}${q}`, { method: "DELETE" });
+      flash(`Ban removed for @${username}${community ? ` in c/${community}` : " (globally)"}`);
+      closeModal();
+    } catch(e) {
+      flashErr(e, "Remove ban");
+      btn.disabled = false;
+    }
+  };
+}
+
+async function openReportsModal(){
+  openModal(`
+    <h2>Moderation reports queue</h2>
+    <div class="meta" style="margin-bottom:12px">Pending reports submitted by users.</div>
+    <div id="rep-list"><div class="loading">Loading reports…</div></div>
+    <div class="flex" style="margin-top:16px;border-top:1px solid var(--border);padding-top:12px">
+      <button class="secondary" id="rep-close">Close</button>
+    </div>
+  `);
+  $("#rep-close").onclick = closeModal;
+
+  const loadReports = async () => {
+    const listEl = $("#rep-list");
+    if (!listEl) return;
+    try {
+      const d = await api("/admin/reports?status=pending&limit=25");
+      const reports = d.reports || [];
+      if (!reports.length) {
+        listEl.innerHTML = '<div class="empty">No pending reports.</div>';
+        return;
+      }
+      listEl.innerHTML = reports.map(r => `
+        <div class="card" style="margin-bottom:8px;padding:10px">
+          <div class="row" style="margin-bottom:4px">
+            <div>
+              <b>Report for ${esc(r.target_type || "content")}</b>
+              ${r.community ? ` <span class="pill" style="border:1px solid var(--border);border-radius:10px;padding:1px 6px;font-size:11px">c/${esc(r.community)}</span>` : ""}
+            </div>
+            <span class="meta">${timeAgo(r.created_at)}</span>
+          </div>
+          <div class="body" style="margin:6px 0;background:#161b22;padding:6px 10px;border-radius:4px;font-size:13px;white-space:pre-wrap">Reason: ${esc(r.reason)}</div>
+          <div class="meta" style="margin-bottom:6px">Target ID: <span class="mono">${esc(r.target_id)}</span></div>
+          <div class="flex" style="gap:6px">
+            <button class="btn-rep-resolve" data-repid="${escAttr(r.id)}">Resolve</button>
+            <button class="secondary btn-rep-dismiss" data-repid="${escAttr(r.id)}">Dismiss</button>
+          </div>
+        </div>
+      `).join("");
+
+      $$("#rep-list .btn-rep-resolve").forEach(b => {
+        b.onclick = async () => {
+          b.disabled = true;
+          try {
+            await api("/admin/reports/" + encodeURIComponent(b.dataset.repid), {
+              method: "PATCH",
+              body: { status: "resolved" }
+            });
+            flash("Report marked resolved");
+            loadReports();
+          } catch(e) {
+            flashErr(e, "Resolve report");
+            b.disabled = false;
+          }
+        };
+      });
+      $$("#rep-list .btn-rep-dismiss").forEach(b => {
+        b.onclick = async () => {
+          b.disabled = true;
+          try {
+            await api("/admin/reports/" + encodeURIComponent(b.dataset.repid), {
+              method: "PATCH",
+              body: { status: "dismissed" }
+            });
+            flash("Report dismissed");
+            loadReports();
+          } catch(e) {
+            flashErr(e, "Dismiss report");
+            b.disabled = false;
+          }
+        };
+      });
+    } catch(e) {
+      flashErr(e, "Load reports");
+      listEl.innerHTML = '<div class="empty">Could not load reports.</div>';
+    }
+  };
+  loadReports();
+}
+
+function confirmModerateDelete(id, type, onSuccess){
+  openModal(`
+    <h2>Moderate delete ${esc(type)}</h2>
+    <p class="muted">Removes content as a moderator. A reason is required for the audit trail.</p>
+    <label for="md-reason">Reason for deletion</label>
+    <textarea id="md-reason" rows="3" placeholder="Explain why this content was removed..."></textarea>
+    <div class="flex" style="margin-top:10px">
+      <button class="danger" id="md-confirm">Delete content</button>
+      <button class="secondary" id="md-cancel">Cancel</button>
+    </div>
+  `);
+  $("#md-cancel").onclick = closeModal;
+  $("#md-confirm").onclick = async () => {
+    const reason = $("#md-reason").value.trim();
+    if (!reason) { flash("Reason required for audit trail", false); return; }
+    const btn = $("#md-confirm");
+    btn.disabled = true;
+    try {
+      await api("/admin/contents/" + encodeURIComponent(id), {
+        method: "DELETE",
+        body: { reason }
+      });
+      flash("Content removed by moderator");
+      closeModal();
+      if (onSuccess) onSuccess();
+    } catch(e) {
+      flashErr(e, "Mod delete");
+      btn.disabled = false;
+    }
+  };
+}
+
 function confirmDeletePost(id){
   openModal(`<h2>Delete post?</h2><p class="muted">Soft-delete: the post returns 410 GONE afterwards. Owner or moderator only.</p>
     <div class="flex"><button class="danger" id="d-yes">Delete</button><button class="secondary" id="d-no">Cancel</button></div>`);
   $("#d-no").onclick=closeModal;
   $("#d-yes").onclick=async()=>{ try{ await api("/posts/"+id,{method:"DELETE"}); flash("Deleted"); closeModal(); location.hash="#/feed"; }catch(e){ flashErr(e,"Delete"); } };
 }
-function openReport(targetType, targetId){
-  openModal(`<h2>Report ${esc(targetType)}</h2><label>Reason</label><textarea id="r-reason" rows="3" placeholder="Why does this violate the rules?"></textarea>
-    <div class="flex" style="margin-top:10px"><button id="r-send">Send report</button><button class="secondary" id="r-cancel">Cancel</button></div>`);
-  $("#r-cancel").onclick=closeModal;
-  $("#r-send").onclick=async()=>{
-    const reason=$("#r-reason").value.trim(); if(!reason){flash("Reason required",false);return;}
-    try{ await api("/reports",{method:"POST",body:{target_type:targetType,target_id:targetId,reason}}); flash("Report sent — thanks"); closeModal(); }
-    catch(e){ flashErr(e,"Report"); }
+
+function openReport(targetType, targetId, communityName){
+  const commInfo = communityName ? ` in c/${esc(communityName)}` : "";
+  const reviewerInfo = communityName ? `c/${esc(communityName)} moderators` : "moderators";
+  openModal(`
+    <h2>Report ${esc(targetType)}${commInfo}</h2>
+    <p class="muted">Reports are reviewed by ${reviewerInfo}. State why this violates the rules.</p>
+    <label for="r-reason">Reason</label>
+    <textarea id="r-reason" rows="3" placeholder="Why does this violate the rules?"></textarea>
+    <div class="flex" style="margin-top:10px">
+      <button id="r-send">Send report</button>
+      <button class="secondary" id="r-cancel">Cancel</button>
+    </div>
+  `);
+  $("#r-cancel").onclick = closeModal;
+  $("#r-send").onclick = async () => {
+    const reason = $("#r-reason").value.trim();
+    if (!reason) { flash("Reason required", false); return; }
+    const btn = $("#r-send");
+    btn.disabled = true;
+    try {
+      await api("/reports", {
+        method: "POST",
+        body: { target_type: targetType, target_id: targetId, reason }
+      });
+      flash("Report sent — thanks");
+      closeModal();
+    } catch(e) {
+      flashErr(e, "Report");
+      btn.disabled = false;
+    }
   };
 }
 
@@ -1972,6 +2675,9 @@ function route(){
   else if(h==="#/inbox") viewInbox();
   else if(h==="#/saves") viewSaves();
   else if(h==="#/profile") viewProfile();
+  else if(h==="#/reports"||h==="#/admin/reports"){ viewFeed(); openReportsModal(); }
+  else if(h==="#/permissions"||h==="#/admin/permissions"){ viewFeed(); openPermissionsModal(); }
+  else if(h==="#/bans"||h==="#/admin/bans"){ viewFeed(); openBanModal(); }
   else viewFeed();
 }
 
