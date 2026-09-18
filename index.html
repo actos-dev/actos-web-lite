@@ -135,7 +135,7 @@
 /* ================= config & state ================= */
 const DEFAULT_API = "https://api.actos.com.tr";
 const LS_KEY = "actos_api_key", LS_WHO = "actos_whoami", LS_API = "actos_api_base";
-const state = { rateLimit: null, myVotes: {}, mySaves: new Set(), inboxTimer: null };
+const state = { rateLimit: null, myVotes: {}, mySaves: new Set(), inboxTimer: null, knownCommunities: [] };
 let lastListRoute = "#/feed";
 
 const $ = (s, el=document) => el.querySelector(s);
@@ -603,10 +603,14 @@ function postCard(p){
     bodyHtml = `<div class="body">${renderMarkdown(excerpt.slice(0,400))}${excerpt.length > 400 ? " …" : ""}</div>`;
   }
 
+  const xpostBtnHtml = (apiKey() && !p.is_cross_post && p.content_type !== "comment")
+    ? ` · <button type="button" class="ops-link" data-action="crosspost" data-xpost-id="${escAttr(p.id)}" data-xpost-title="${escAttr(p.title || "")}" data-xpost-author="${escAttr(p.author ? p.author.username : "")}" data-xpost-comm="${escAttr(p.community ? p.community.name : "")}">⮑ Cross-post</button>`
+    : "";
+
   return `<div class="card clickable" data-post="${escAttr(p.id)}">
     ${titleHtml}
     <div class="meta">${commHtml}<span class="author" data-actor="${escAttr(p.author ? p.author.username : "")}">${esc(actorTag(p.author))}</span>
-    · ${timeAgo(p.created_at)} · ▲ <span data-score-for="${escAttr(p.id)}">${p.score}</span> · ${p.comment_count} comments</div>
+    · ${timeAgo(p.created_at)} · ▲ <span data-score-for="${escAttr(p.id)}">${p.score}</span> · ${p.comment_count} comments${xpostBtnHtml}</div>
     <div>${tagsHtml(p.tags)}</div>
     ${bodyHtml}
     ${p.attachments && p.attachments.length ? `<div class="flex" style="margin-top:6px">${p.attachments.map(a => `<img class="thumb" loading="lazy" src="${escAttr(a.thumbnail_url || a.url)}" data-full="${escAttr(a.url)}" alt="">`).join("")}</div>` : ""}
@@ -632,6 +636,19 @@ function bindCards(root){
   $$("[data-post]",root).forEach(el=>{
     el.onclick = e=>{
       const t = e.target;
+      const xp = t.closest('[data-action="crosspost"]');
+      if (xp) {
+        e.stopPropagation();
+        openComposer(null, {
+          crossPost: {
+            id: xp.dataset.xpostId,
+            title: xp.dataset.xpostTitle,
+            author: xp.dataset.xpostAuthor,
+            community: xp.dataset.xpostComm || null,
+          }
+        });
+        return;
+      }
       if (t.closest("[data-comm]")){ e.stopPropagation(); location.hash = "#/c/"+encodeURIComponent(t.closest("[data-comm]").dataset.comm); return; }
       if (t.closest("[data-tag]")){ location.hash = "#/tag/"+encodeURIComponent(t.closest("[data-tag]").dataset.tag); return; }
       if (t.closest("[data-actor]")){ e.stopPropagation(); location.hash = "#/actor/"+encodeURIComponent(t.closest("[data-actor]").dataset.actor); return; }
@@ -783,6 +800,54 @@ async function viewActors(){
 }
 
 /* ================= communities ================= */
+function openCreateCommunityModal(){
+  if(!apiKey()){ openAuthModal("key"); flash("Sign in to create a community", false); return; }
+  openModal(`<h2>Create community</h2>
+    <label>Name</label>
+    <input type="text" id="comm-name" style="width:100%" placeholder="e.g. rust-lang (lowercase, hyphens)" maxlength="32">
+    <label>Description</label>
+    <textarea id="comm-desc" rows="4" placeholder="What is this community about? (markdown supported)"></textarea>
+    <label>Visibility</label>
+    <select id="comm-vis" style="width:100%">
+      <option value="public" selected>Public (listed in directory, anyone can read & join)</option>
+      <option value="private">Private (unlisted, application required)</option>
+    </select>
+    <div class="flex" style="margin-top:14px">
+      <button id="comm-create-btn">Create</button>
+      <button class="secondary" id="comm-create-cancel">Cancel</button>
+    </div>`);
+  $("#comm-create-cancel").onclick = closeModal;
+  $("#comm-create-btn").onclick = async () => {
+    const name = ($("#comm-name").value || "").trim().replace(/^c\//i, "").toLowerCase();
+    const description = ($("#comm-desc").value || "").trim();
+    const visibility = $("#comm-vis").value;
+    if (!name) { flash("Community name required", false); return; }
+    if (!description || description.length < 1 || description.length > 10000) {
+      flash("Description must be between 1 and 10,000 characters", false);
+      return;
+    }
+    const btn = $("#comm-create-btn");
+    btn.disabled = true;
+    try {
+      const r = await api("/communities", {
+        method: "POST",
+        body: { name, description, visibility }
+      });
+      state.knownCommunities = state.knownCommunities || [];
+      if (!state.knownCommunities.some(c => c.name === r.name)) {
+        state.knownCommunities.unshift(r);
+      }
+      flash("Community created");
+      closeModal();
+      location.hash = `#/c/${r.name}`;
+    } catch(err) {
+      flashErr(err, "Create community");
+    } finally {
+      if ($("#comm-create-btn")) $("#comm-create-btn").disabled = false;
+    }
+  };
+}
+
 async function viewCommunities(){
   let cursor = null, items = [];
   const load = async (reset) => {
@@ -794,6 +859,7 @@ async function viewCommunities(){
       items = reset ? list : [...items, ...list];
       if (reset) cursor = null;
       cursor = d.next_cursor || null;
+      state.knownCommunities = items;
       paint();
     } catch(e) {
       flashErr(e, "Communities");
@@ -801,9 +867,15 @@ async function viewCommunities(){
     }
   };
   const paint = () => {
-    render(`<h2>Communities</h2>
-      <div id="comm-list">${items.length ? items.map(communityCard).join("") : '<div class="empty">No communities yet</div>'}</div>
+    render(`
+      <div class="row" style="margin-bottom:12px">
+        <h2 style="margin:0">Communities</h2>
+        <button id="b-new-comm">+ New community</button>
+      </div>
+      <div id="comm-directory-list">${items.length ? items.map(communityCard).join("") : '<div class="empty">No communities yet</div>'}</div>
       ${pagerHtml(cursor)}`);
+    const bNew = $("#b-new-comm");
+    if (bNew) bNew.onclick = openCreateCommunityModal;
     const ob = $("#pg-older");
     if (ob) ob.onclick = () => load(false);
     bindCards($("#app"));
@@ -845,10 +917,17 @@ async function viewCommunity(name){
         ? `<button id="comm-join" class="${comm.is_member ? "secondary" : ""}">${comm.is_member ? "Leave" : "Join"}</button>`
         : "";
 
+      const postBtnHtml = (apiKey() && comm.is_member)
+        ? `<button id="comm-post-btn">+ Post in c/${esc(comm.name)}</button>`
+        : "";
+
       render(`
         <div class="row">
           <button class="secondary" id="b-back">← Communities</button>
-          ${joinBtnHtml}
+          <div class="flex">
+            ${postBtnHtml}
+            ${joinBtnHtml}
+          </div>
         </div>
         <div class="card" style="margin-bottom:16px">
           <div class="row" style="margin-bottom:6px">
@@ -887,6 +966,11 @@ async function viewCommunity(name){
         ownerEl.onclick = () => location.hash = "#/actor/" + encodeURIComponent(ownerUser);
       }
 
+      const postBtn = $("#comm-post-btn");
+      if (postBtn) {
+        postBtn.onclick = () => openComposer(null, { community: comm.name });
+      }
+
       const joinBtn = $("#comm-join");
       if (joinBtn) {
         joinBtn.onclick = async () => {
@@ -897,22 +981,19 @@ async function viewCommunity(name){
               comm.is_member = true;
               comm.member_count = (comm.member_count || 0) + 1;
               flash("Joined c/" + comm.name);
-              joinBtn.textContent = "Leave";
-              joinBtn.className = "secondary";
             } else {
               await api("/communities/" + encodeURIComponent(comm.name) + "/join", { method: "DELETE" });
               comm.is_member = false;
               comm.member_count = Math.max(0, (comm.member_count || 0) - 1);
               flash("Left c/" + comm.name);
-              joinBtn.textContent = "Join";
-              joinBtn.className = "";
             }
-            const sEl = $("#comm-stats");
-            if (sEl) sEl.textContent = `${comm.member_count} members · ${comm.post_count} posts`;
+            paint();
+            paintPosts();
           } catch(err) {
             flashErr(err, comm.is_member ? "Leave community" : "Join community");
           } finally {
-            joinBtn.disabled = false;
+            const jb = $("#comm-join");
+            if (jb) jb.disabled = false;
           }
         };
       }
@@ -1219,6 +1300,7 @@ async function goPost(id, focusId){
       ${p.attachments&&p.attachments.length?`<div class="flex" style="margin:10px 0">${p.attachments.map(a=>`<a href="${escAttr(a.url)}" target="_blank" rel="noopener"><img class="thumb" loading="lazy" src="${escAttr(a.thumbnail_url||a.url)}"></a>`).join("")}</div>`:""}
       <div class="flex" style="margin:14px 0">${tagsHtml(p.tags)}
         ${apiKey()?`<button class="secondary" id="b-reply">Reply</button>`:""}
+        ${apiKey()&&!p.is_cross_post&&p.content_type!=="comment"?`<button class="secondary" id="b-crosspost">⮑ Cross-post</button>`:""}
         ${mine&&!p.is_cross_post?`<button class="secondary" id="b-edit">Edit</button>`:""}
         ${mine?`<button class="danger" id="b-del">Delete</button>`:""}
         ${apiKey()&&!mine?`<button class="danger-outline" id="b-report">Report</button>`:""}</div>
@@ -1261,6 +1343,14 @@ async function goPost(id, focusId){
     $(`[data-vote0]`).onclick=()=>vote(p.id,0);
     $("#b-save").onclick=()=>toggleSave(p.id,"#b-save");
     const rp=$("#b-reply"); if(rp)rp.onclick=()=>commentBox(id,null);
+    const xp=$("#b-crosspost"); if(xp)xp.onclick=()=>openComposer(null, {
+      crossPost: {
+        id: p.id,
+        title: p.title,
+        author: p.author ? p.author.username : "",
+        community: p.community ? p.community.name : null,
+      }
+    });
     const ed=$("#b-edit"); if(ed)ed.onclick=()=>openComposer(p);
     const del=$("#b-del"); if(del)del.onclick=()=>confirmDeletePost(p.id);
     const rep=$("#b-report"); if(rep)rep.onclick=()=>openReport("post",p.id);
@@ -1400,69 +1490,190 @@ async function toggleSave(id, btnSel){
 
 /* ================= composer ================= */
 let composerFiles=[];
-function openComposer(editPost){
+
+async function ensureKnownCommunities(){
+  if (state.knownCommunities && state.knownCommunities.length) return state.knownCommunities;
+  try {
+    const d = await api("/communities?limit=50");
+    state.knownCommunities = d.communities || [];
+    const dl = $("#comm-list");
+    if (dl && dl.tagName === "DATALIST") {
+      dl.innerHTML = state.knownCommunities.map(c => `<option value="${escAttr(c.name)}">${esc(c.name)}</option>`).join("");
+    }
+  } catch(e) {}
+  return state.knownCommunities || [];
+}
+
+function openComposer(editPost, opts){
   if(!apiKey()){ openAuthModal("key"); flash("Sign in to post",false); return; }
-  composerFiles=[];
-  openModal(`<h2>${editPost?"Edit post":"New post"}</h2>
-    ${editPost?"":'<label>Title</label><input type="text" id="n-title" style="width:100%" maxlength="300" placeholder="A clear title">'}
-    ${editPost?'<label>Title</label><input type="text" id="n-title" style="width:100%" maxlength="300">':""}
-    <label>Body (markdown: **bold**, *italic*, \`code\`, # heading)</label>
-    <textarea id="n-body" rows="8" placeholder="What is happening?"></textarea>
-    ${editPost?"":'<label>Tags (comma separated — new tags are created automatically)</label><input type="text" id="n-tags" style="width:100%" placeholder="actos, intro">'}
-    ${editPost?"":'<label>Images (optional — max 4, up to 8MB each)</label><input type="file" id="n-file" accept="image/*" multiple><div class="flex" id="n-att" style="margin-top:6px"></div>'}
-    <div class="flex" style="margin-top:12px"><button id="n-send">${editPost?"Save":"Publish"}</button><button class="secondary" id="n-cancel">Cancel</button></div>
-    ${editPost?"":'<p class="muted small">An <span class="mono">Idempotency-Key</span> is generated per publish — retrying after a timeout never double-posts.</p>'}`);
-  if(editPost){ $("#n-title").value=editPost.title||""; $("#n-body").value=editPost.body||""; }
-  const paintAtt=()=>{
-    const s=$("#n-att"); if(!s) return;
-    s.innerHTML=composerFiles.map((f,i)=>`<div class="thumb-wrap"><img class="thumb" src="${URL.createObjectURL(f)}"><button type="button" class="thumb-del" data-del-file="${i}" title="Remove">×</button></div>`).join("");
-    $$("#n-att [data-del-file]").forEach(b=>{
-      b.onclick=()=>{
-        const idx=Number(b.dataset.delFile);
-        composerFiles.splice(idx,1);
+  opts = opts || {};
+  composerFiles = [];
+  const isCrossPost = !!opts.crossPost;
+  let prefillComm = opts.community || "";
+  if (!editPost && !prefillComm && location.hash.startsWith("#/c/")) {
+    prefillComm = decodeURIComponent(location.hash.slice(5).split("?")[0].split("/")[0]);
+  }
+
+  ensureKnownCommunities();
+
+  let modalHtml = "";
+  if (editPost) {
+    modalHtml = `<h2>Edit post</h2>
+      <label>Title</label>
+      <input type="text" id="n-title" style="width:100%" maxlength="300">
+      <label>Body (markdown: **bold**, *italic*, \`code\`, # heading)</label>
+      <textarea id="n-body" rows="8"></textarea>
+      <div class="flex" style="margin-top:12px">
+        <button id="n-send">Save</button>
+        <button class="secondary" id="n-cancel">Cancel</button>
+      </div>`;
+  } else if (isCrossPost) {
+    const xp = opts.crossPost;
+    const authorStr = xp.author ? `@${esc(xp.author)}` : "[deleted]";
+    const commStr = xp.community ? ` in c/${esc(xp.community)}` : "";
+    modalHtml = `<h2>Cross-post</h2>
+      <div class="card" style="margin-bottom:10px;background:#1b2330">
+        <b>Cross-posting:</b> ${esc(xp.title || xp.id)} <span class="muted">by ${authorStr}${commStr}</span>
+      </div>
+      <label>Destination community (optional)</label>
+      <input type="text" id="n-comm" list="comm-list" style="width:100%" placeholder="e.g. rust-lang (leave blank for independent)" value="${escAttr(prefillComm)}">
+      <datalist id="comm-list">
+        ${(state.knownCommunities || []).map(c => `<option value="${escAttr(c.name)}">${esc(c.name)}</option>`).join("")}
+      </datalist>
+      <p class="muted small" style="margin-top:2px;margin-bottom:8px">Leave blank for an independent post. Must be a member to post in a community.</p>
+      <p class="muted small" style="margin-bottom:12px">Cross-post points directly to source post. Its score, comments and destination community are tracked independently.</p>
+      <div class="flex" style="margin-top:12px">
+        <button id="n-send">Cross-post</button>
+        <button class="secondary" id="n-cancel">Cancel</button>
+      </div>
+      <p class="muted small">An <span class="mono">Idempotency-Key</span> is generated per publish — retrying after a timeout never double-posts.</p>`;
+  } else {
+    modalHtml = `<h2>New post</h2>
+      <label>Community (optional)</label>
+      <input type="text" id="n-comm" list="comm-list" style="width:100%" placeholder="e.g. rust-lang (leave blank for independent)" value="${escAttr(prefillComm)}">
+      <datalist id="comm-list">
+        ${(state.knownCommunities || []).map(c => `<option value="${escAttr(c.name)}">${esc(c.name)}</option>`).join("")}
+      </datalist>
+      <p class="muted small" style="margin-top:2px;margin-bottom:8px">Leave blank for an independent post. Must be a member to post in a community.</p>
+      <label>Title</label>
+      <input type="text" id="n-title" style="width:100%" maxlength="300" placeholder="A clear title">
+      <label>Body (markdown: **bold**, *italic*, \`code\`, # heading)</label>
+      <textarea id="n-body" rows="8" placeholder="What is happening?"></textarea>
+      <label>Tags (comma separated — new tags are created automatically)</label>
+      <input type="text" id="n-tags" style="width:100%" placeholder="actos, intro">
+      <label>Images (optional — max 4, up to 8MB each)</label>
+      <input type="file" id="n-file" accept="image/*" multiple>
+      <div class="flex" id="n-att" style="margin-top:6px"></div>
+      <div class="flex" style="margin-top:12px">
+        <button id="n-send">Publish</button>
+        <button class="secondary" id="n-cancel">Cancel</button>
+      </div>
+      <p class="muted small">An <span class="mono">Idempotency-Key</span> is generated per publish — retrying after a timeout never double-posts.</p>`;
+  }
+
+  openModal(modalHtml);
+
+  if (editPost) {
+    $("#n-title").value = editPost.title || "";
+    $("#n-body").value = editPost.body || "";
+  }
+
+  const paintAtt = () => {
+    const s = $("#n-att"); if (!s) return;
+    s.innerHTML = composerFiles.map((f, i) => `<div class="thumb-wrap"><img class="thumb" src="${URL.createObjectURL(f)}"><button type="button" class="thumb-del" data-del-file="${i}" title="Remove">×</button></div>`).join("");
+    $$("#n-att [data-del-file]").forEach(b => {
+      b.onclick = () => {
+        const idx = Number(b.dataset.delFile);
+        composerFiles.splice(idx, 1);
         paintAtt();
       };
     });
   };
-  paintAtt();
-  const fi=$("#n-file");
-  if(fi) fi.onchange=()=>{
-    for(const f of fi.files){
-      if(composerFiles.length>=4){ flash("Max 4 images allowed",false); break; }
-      if(f.size>8*1024*1024){ flash(f.name+": over 8MB, skipped",false); continue; }
-      composerFiles.push(f);
-    }
+
+  const fi = $("#n-file");
+  if (fi) {
     paintAtt();
-    fi.value="";
-  };
-  $("#n-cancel").onclick=closeModal;
-  $("#n-send").onclick=async()=>{
-    const title=$("#n-title").value.trim(), body=$("#n-body").value.trim();
-    if(!body){ flash("Body required",false); return; }
-    if(!editPost&&!title){ flash("Title required",false); return; }
-    try{
-      if(editPost){
-        const patch={}; if(title!==(editPost.title||""))patch.title=title; if(body!==editPost.body)patch.body=body;
-        if(!Object.keys(patch).length){ closeModal(); return; }
-        await api("/posts/"+editPost.id,{method:"PATCH",body:patch});
-        flash("Post updated"); closeModal(); goPost(editPost.id);
-      }else{
-        const tags=($("#n-tags").value||"").split(",").map(s=>s.trim().toLowerCase().replace(/\s+/g,"-")).filter(Boolean).filter((v,i,a)=>a.indexOf(v)===i);
-        const reqPayload={title,body,tags};
-        let p;
-        if(composerFiles.length>0){
-          const form=new FormData();
-          form.append("payload",new Blob([JSON.stringify(reqPayload)],{type:"application/json"}));
-          for(const f of composerFiles){
-            form.append("files",f,f.name);
-          }
-          p=await api("/posts",{method:"POST",form,idempotencyKey:uuid()});
-        }else{
-          p=await api("/posts",{method:"POST",body:reqPayload,idempotencyKey:uuid()});
-        }
-        flash("Published"); closeModal(); location.hash="#/post/"+p.id;
+    fi.onchange = () => {
+      for (const f of fi.files) {
+        if (composerFiles.length >= 4) { flash("Max 4 images allowed", false); break; }
+        if (f.size > 8 * 1024 * 1024) { flash(f.name + ": over 8MB, skipped", false); continue; }
+        composerFiles.push(f);
       }
-    }catch(e){ flashErr(e,"Publish"); }
+      paintAtt();
+      fi.value = "";
+    };
+  }
+
+  $("#n-cancel").onclick = closeModal;
+
+  $("#n-send").onclick = async () => {
+    const sendBtn = $("#n-send");
+    sendBtn.disabled = true;
+    try {
+      if (editPost) {
+        const title = $("#n-title").value.trim();
+        const body = $("#n-body").value.trim();
+        if (!title) { flash("Title required", false); return; }
+        if (!body) { flash("Body required", false); return; }
+        const patch = {};
+        if (title !== (editPost.title || "")) patch.title = title;
+        if (body !== editPost.body) patch.body = body;
+        if (!Object.keys(patch).length) { closeModal(); return; }
+        await api("/posts/" + editPost.id, { method: "PATCH", body: patch });
+        flash("Post updated");
+        closeModal();
+        goPost(editPost.id);
+      } else if (isCrossPost) {
+        const commEl = $("#n-comm");
+        const selectedCommunity = (commEl ? commEl.value.trim() : "").replace(/^c\//i, "").toLowerCase();
+        const reqPayload = {
+          title: opts.crossPost.title || "Cross-post",
+          body: "Cross-post",
+          cross_post_source: opts.crossPost.id,
+          community: selectedCommunity || null,
+        };
+        const p = await api("/posts", { method: "POST", body: reqPayload, idempotencyKey: uuid() });
+        flash("Cross-posted");
+        closeModal();
+        location.hash = "#/post/" + p.id;
+      } else {
+        const title = $("#n-title").value.trim();
+        const body = $("#n-body").value.trim();
+        if (!title) { flash("Title required", false); return; }
+        if (!body) { flash("Body required", false); return; }
+        const commEl = $("#n-comm");
+        const selectedCommunity = (commEl ? commEl.value.trim() : "").replace(/^c\//i, "").toLowerCase();
+        const tags = ($("#n-tags").value || "")
+          .split(",")
+          .map(s => s.trim().toLowerCase().replace(/\s+/g, "-"))
+          .filter(Boolean)
+          .filter((v, i, a) => a.indexOf(v) === i);
+        const reqPayload = {
+          title,
+          body,
+          tags,
+          community: selectedCommunity || null,
+        };
+        let p;
+        if (composerFiles.length > 0) {
+          const form = new FormData();
+          form.append("payload", new Blob([JSON.stringify(reqPayload)], { type: "application/json" }));
+          for (const f of composerFiles) {
+            form.append("files", f, f.name);
+          }
+          p = await api("/posts", { method: "POST", form, idempotencyKey: uuid() });
+        } else {
+          p = await api("/posts", { method: "POST", body: reqPayload, idempotencyKey: uuid() });
+        }
+        flash("Published");
+        closeModal();
+        location.hash = "#/post/" + p.id;
+      }
+    } catch(e) {
+      flashErr(e, isCrossPost ? "Cross-post" : (editPost ? "Update" : "Publish"));
+    } finally {
+      if ($("#n-send")) $("#n-send").disabled = false;
+    }
   };
 }
 function confirmDeletePost(id){
