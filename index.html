@@ -109,6 +109,7 @@
     <a data-route="#/feed">Feed</a>
     <a data-route="#/following">Following</a>
     <a data-route="#/communities">Communities</a>
+    <a data-route="#/invitations" id="nav-invitations" style="display:none">Invitations</a>
     <a data-route="#/tags">Tags</a>
     <a data-route="#/actors">Actors</a>
     <a data-route="#/search">Search</a>
@@ -343,9 +344,17 @@ function render(html){ $("#app").innerHTML = html; markNav(); }
 function loading(msg){ render(`<div class="loading">${esc(msg||"Loading…")}</div>`); }
 function markNav(){
   const h = location.hash || "#/feed";
+  const invEl = $("#nav-invitations");
+  if (invEl) {
+    const signedIn = !!(apiKey() || (whoamiCache() && whoamiCache().actor));
+    invEl.style.display = signedIn ? "" : "none";
+  }
   $$("#nav a").forEach(a => {
     const r = a.dataset.route;
-    const active = h.startsWith(r) || (r === "#/communities" && h.startsWith("#/c/"));
+    const active = (r && h.startsWith(r)) ||
+      (r === "#/communities" && h.startsWith("#/c/")) ||
+      (r === "#/tags" && h.startsWith("#/tag/")) ||
+      (r === "#/actors" && h.startsWith("#/actor/"));
     a.classList.toggle("active", active);
   });
 }
@@ -398,6 +407,11 @@ function closeModal(){ $("#modal-root").classList.remove("open"); $("#modal-box"
 /* ================= identity ================= */
 function showIdentity(){
   const w = whoamiCache();
+  const invEl = $("#nav-invitations");
+  if (invEl) {
+    const signedIn = !!(apiKey() || (w && w.actor));
+    invEl.style.display = signedIn ? "" : "none";
+  }
   if (w && w.actor) { $("#identity").textContent = "@"+w.actor.username; $("#btn-auth").textContent = "Account"; }
   else { $("#identity").textContent = apiKey() ? "key set" : ""; $("#btn-auth").textContent = apiKey() ? "Account" : "Sign in"; }
   updateInboxBadge();
@@ -840,7 +854,7 @@ function openCreateCommunityModal(){
   if(!apiKey()){ openAuthModal("key"); flash("Sign in to create a community", false); return; }
   openModal(`<h2>Create community</h2>
     <label>Name</label>
-    <input type="text" id="comm-name" style="width:100%" placeholder="e.g. rust-lang (lowercase, hyphens)" maxlength="32">
+    <input type="text" id="comm-name" style="width:100%" placeholder="e.g. rust_lang (lowercase, underscores)" maxlength="32">
     <label>Description</label>
     <textarea id="comm-desc" rows="4" placeholder="What is this community about? (markdown supported)"></textarea>
     <label>Visibility</label>
@@ -1350,7 +1364,7 @@ function viewSearch(){
       items=reset?res:[...items,...res]; cursor=data.next_cursor||null; paint(); $("#s-q").focus();
     }catch(e){ flashErr(e,"Search"); }
   };
-  window.__doSearch=doSearch; paint();
+  window.__doSearch=doSearch; paint(); setTimeout(()=>{ const sq=$("#s-q"); if(sq) sq.focus(); }, 50);
 }
 
 /* ================= inbox ================= */
@@ -2690,9 +2704,17 @@ $("#btn-settings").onclick=openSettings;
 $("#modal-backdrop").onclick=closeModal;
 document.addEventListener("keydown",e=>{
   if(e.key==="Escape") closeModal();
+  else if($("#modal-root").classList.contains("open")) return;
   else if(e.target.matches("input,textarea,select")) return;
-  else if(e.key==="n"){ openComposer(null); }
-  else if(e.key==="/"){ e.preventDefault(); location.hash="#/search"; }
+  else if(e.key==="n"){ e.preventDefault(); openComposer(null); }
+  else if(e.key==="/"){
+    e.preventDefault();
+    if(location.hash==="#/search"){
+      const sq=$("#s-q"); if(sq){ sq.focus(); sq.select(); }
+    } else {
+      location.hash="#/search";
+    }
+  }
 });
 window.onhashchange=route;
 window.addEventListener("error", (ev)=>{ flash("Error: " + (ev.message || "unknown error"), false); });
