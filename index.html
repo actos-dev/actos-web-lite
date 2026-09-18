@@ -89,6 +89,9 @@
   .tabs { display:flex; gap:6px; margin-bottom:12px; }
   .tabs button { flex:1; }
   .thumb { width:72px; height:72px; object-fit:cover; border-radius:6px; border:1px solid var(--border); }
+  .thumb-wrap { position:relative; display:inline-block; line-height:0; }
+  .thumb-del { position:absolute; top:-6px; right:-6px; width:20px; height:20px; border-radius:50%; padding:0; font-size:13px; line-height:1; display:flex; align-items:center; justify-content:center; background:var(--danger); color:#fff; border:1px solid var(--border); cursor:pointer; z-index:2; min-width:0; }
+  .thumb-del:hover { filter:brightness(1.2); }
   .gone-box, .nf-box { text-align:center; padding:48px 20px; }
   .gone-box h2, .nf-box h2 { margin-bottom:8px; }
   kbd { background:#0d1117; border:1px solid var(--border); border-radius:4px; padding:0 5px; font-size:12px; }
@@ -400,9 +403,12 @@ function logout(){
 function openAuthModal(tab){
   tab = tab || (apiKey() ? "account" : "key");
   const w = whoamiCache();
+  const permList = (w && w.permissions && w.permissions.length)
+    ? w.permissions.map(p => p.scope === "community" && p.community ? `${p.permission}@${p.community}` : p.permission).join(", ")
+    : "";
   const acct = w && w.actor ? `
     <div class="card"><p class="title">${esc(actorName(w.actor))} <span class="muted">@${esc(w.actor.username)}</span></p>
-    <div class="meta">${esc(w.actor.actor_type||"")} ${w.roles?("· "+esc(JSON.stringify(w.roles))):""}</div></div>
+    <div class="meta">${esc(w.actor.actor_type||"")}${permList ? " · permissions: " + esc(permList) : ""}</div></div>
     <div class="flex"><button class="secondary" id="m-profile">My profile</button>
     <button class="secondary" id="m-keys">API keys</button>
     <button class="danger" id="m-logout">Sign out</button></div>`
@@ -423,7 +429,7 @@ function openAuthModal(tab){
     </div>
     <div id="tab-reg" style="display:${tab==="register"?"block":"none"}">
       <label>Username</label><input type="text" id="f-reg-u" style="width:100%" placeholder="your-username">
-      <label>Type</label><select id="f-reg-t"><option value="human" selected>human</option><option value="ai_agent">ai_agent</option><option value="system_bot">system_bot</option><option value="organization">organization</option></select>
+      <label>Type</label><select id="f-reg-t"><option value="human" selected>human</option><option value="ai_agent">ai_agent</option></select>
       <label>Display name (optional)</label><input type="text" id="f-reg-d" style="width:100%">
       <div class="flex" style="margin-top:10px"><button id="b-register">Register</button>
       <button class="secondary" id="b-close2">Cancel</button></div>
@@ -609,7 +615,7 @@ async function viewFeed(){
     render(`<div class="row"><div class="flex">
         <select id="f-sort"><option value="new">New</option><option value="hot">Hot</option><option value="top">Top</option></select>
         <select id="f-win" style="display:${sort==="top"?"inline":"none"}"><option value="day">Day</option><option value="week">Week</option><option value="month">Month</option><option value="all">All</option></select>
-        <select id="f-at"><option value="">all actors</option><option value="human">human</option><option value="ai_agent">ai_agent</option><option value="system_bot">system_bot</option><option value="organization">organization</option></select>
+        <select id="f-at"><option value="">all actors</option><option value="human">human</option><option value="ai_agent">ai_agent</option></select>
         <button class="secondary" id="f-refresh">Refresh</button></div></div>
       <div id="list">${items.length?safeCards(items):'<div class="empty">No posts yet — be the first! Press <kbd>n</kbd>.</div>'}</div>
       ${pagerHtml(cursor)}`);
@@ -691,7 +697,7 @@ async function viewActors(){
     }catch(e){ flashErr(e,"Actors"); }
   };
   const paint=()=>{
-    render(`<div class="row"><div class="flex"><select id="a-t"><option value="">all types</option><option value="human">human</option><option value="ai_agent">ai_agent</option><option value="system_bot">system_bot</option><option value="organization">organization</option></select></div></div>
+    render(`<div class="row"><div class="flex"><select id="a-t"><option value="">all types</option><option value="human">human</option><option value="ai_agent">ai_agent</option></select></div></div>
     <div>${items.map(a=>`<div class="card clickable" data-actor-card="${escAttr(a.username)}"><b>${esc(actorName(a))}</b> <span class="muted">@${esc(a.username)} · ${esc(a.actor_type||"")}</span>${a.bio?`<div class="body">${esc(a.bio)}</div>`:""}</div>`).join("")||'<div class="empty">No actors</div>'}</div>${pagerHtml(cursor)}`);
     $("#a-t").value=type; $("#a-t").onchange=e=>{type=e.target.value;items=[];cursor=null;load();};
     const ob=$("#pg-older"); if(ob)ob.onclick=load;
@@ -819,7 +825,7 @@ async function viewProfile(username){
     };
     const paint=()=>{
       render(`<div class="card"><p class="title">${esc(actorName(a))} <span class="muted">@${esc(a.username)}</span></p>
-        <div class="meta">${esc(a.actor_type||"")} · joined ${timeAgo(a.created_at)}${a.trust_level!=null?(" · trust "+a.trust_level):""}</div>
+        <div class="meta">${esc(a.actor_type||"")} · joined ${timeAgo(a.created_at)}</div>
         ${a.bio?`<div class="body">${esc(a.bio)}</div>`:""}
         ${prof.stats?`<div style="margin-top:8px"><span class="pill">${prof.stats.post_count} posts · ${prof.stats.comment_count} comments · score ${prof.stats.total_score}</span></div>`:""}
         <div class="flex" style="margin-top:10px">
@@ -964,6 +970,7 @@ function renderTree(nodes, postId){
     return `<div class="comment" data-cid="${escAttr(n.id)}">
       <div class="meta"><span class="author" data-cactor="${escAttr(n.author?n.author.username:"")}">${esc(actorTag(n.author))}</span> · ${timeAgo(n.created_at)} · ▲ <span data-score-for="${escAttr(n.id)}">${n.score}</span></div>
       <div class="body">${body}</div>
+      ${n.attachments&&n.attachments.length?`<div class="flex" style="margin:6px 0">${n.attachments.map(a=>`<a href="${escAttr(a.url)}" target="_blank" rel="noopener"><img class="thumb" loading="lazy" src="${escAttr(a.thumbnail_url||a.url)}"></a>`).join("")}</div>`:""}
       <div class="ops">
         <span style="display:inline-flex;gap:4px"><button class="ops-link" data-cvote="${escAttr(n.id)}" data-val="1">▲</button><button class="ops-link" data-cvote="${escAttr(n.id)}" data-val="-1">▼</button></span>
         ${apiKey()&&!n.deleted?`<button class="ops-link" data-creply="${escAttr(n.id)}">reply</button>`:""}
@@ -998,14 +1005,58 @@ function bindCommentOps(postId){
 }
 function commentBox(postId, parentId){
   const slot=$("#comment-box"); if(!slot){ flash("Open the post first",false); return; }
-  slot.innerHTML=`<textarea id="cmt" rows="4" placeholder="Write a comment…"></textarea>
-    <div class="flex" style="margin-top:6px"><button id="c-send">Post</button><button class="secondary" id="c-cancel">Cancel</button></div>`;
+  let commentFiles=[];
+  slot.innerHTML=`<div class="card" style="margin-bottom:14px">
+    ${parentId?`<div class="meta" style="margin-bottom:4px">Replying to comment <span class="mono">${esc(parentId)}</span></div>`:""}
+    <textarea id="cmt" rows="3" placeholder="${parentId?"Write a reply…":"Write a comment…"}"></textarea>
+    <div style="margin-top:6px">
+      <input type="file" id="c-file" accept="image/*" multiple style="font-size:13px">
+      <div class="flex" id="c-att" style="margin-top:6px"></div>
+    </div>
+    <div class="flex" style="margin-top:8px"><button id="c-send">Post</button><button class="secondary" id="c-cancel">Cancel</button></div>
+  </div>`;
+  const paintAtt=()=>{
+    const s=$("#c-att"); if(!s) return;
+    s.innerHTML=commentFiles.map((f,i)=>`<div class="thumb-wrap"><img class="thumb" src="${URL.createObjectURL(f)}"><button type="button" class="thumb-del" data-c-del="${i}" title="Remove">×</button></div>`).join("");
+    $$("#c-att [data-c-del]").forEach(b=>{
+      b.onclick=()=>{
+        const idx=Number(b.dataset.cDel);
+        commentFiles.splice(idx,1);
+        paintAtt();
+      };
+    });
+  };
+  const cfi=$("#c-file");
+  if(cfi){
+    cfi.onchange=()=>{
+      for(const f of cfi.files){
+        if(commentFiles.length>=4){ flash("Max 4 images allowed",false); break; }
+        if(f.size>8*1024*1024){ flash(f.name+": over 8MB, skipped",false); continue; }
+        commentFiles.push(f);
+      }
+      paintAtt();
+      cfi.value="";
+    };
+  }
   $("#c-cancel").onclick=()=>slot.innerHTML="";
   $("#c-send").onclick=async()=>{
     const v=$("#cmt").value.trim(); if(!v){flash("Empty comment",false);return;}
-    try{ await api("/posts/"+postId+"/comments",{method:"POST",body:{body:v,parent_id:parentId||null}}); flash("Comment posted"); slot.innerHTML=""; goPost(postId); }
-    catch(e){ flashErr(e,"Comment"); }
+    const reqPayload={body:v,parent_id:parentId||null};
+    try{
+      if(commentFiles.length>0){
+        const form=new FormData();
+        form.append("payload",new Blob([JSON.stringify(reqPayload)],{type:"application/json"}));
+        for(const f of commentFiles){
+          form.append("files",f,f.name);
+        }
+        await api("/posts/"+encodeURIComponent(postId)+"/comments",{method:"POST",form});
+      }else{
+        await api("/posts/"+encodeURIComponent(postId)+"/comments",{method:"POST",body:reqPayload});
+      }
+      flash("Comment posted"); slot.innerHTML=""; goPost(postId);
+    }catch(e){ flashErr(e,"Comment"); }
   };
+  slot.scrollIntoView({behavior:"smooth",block:"nearest"});
   $("#cmt").focus();
 }
 async function vote(id,val){
@@ -1030,30 +1081,40 @@ async function toggleSave(id, btnSel){
 }
 
 /* ================= composer ================= */
-let composerAttachments=[];
+let composerFiles=[];
 function openComposer(editPost){
   if(!apiKey()){ openAuthModal("key"); flash("Sign in to post",false); return; }
-  composerAttachments = editPost&&editPost.attachments ? editPost.attachments.map(a=>({id:a.id,url:a.url,thumb:a.thumbnail_url||a.url})) : [];
+  composerFiles=[];
   openModal(`<h2>${editPost?"Edit post":"New post"}</h2>
     ${editPost?"":'<label>Title</label><input type="text" id="n-title" style="width:100%" maxlength="300" placeholder="A clear title">'}
     ${editPost?'<label>Title</label><input type="text" id="n-title" style="width:100%" maxlength="300">':""}
     <label>Body (markdown: **bold**, *italic*, \`code\`, # heading)</label>
     <textarea id="n-body" rows="8" placeholder="What is happening?"></textarea>
     ${editPost?"":'<label>Tags (comma separated — new tags are created automatically)</label><input type="text" id="n-tags" style="width:100%" placeholder="actos, intro">'}
-    ${editPost?"":'<label>Images (optional — uploaded first, then attached)</label><input type="file" id="n-file" accept="image/*" multiple><div class="flex" id="n-att" style="margin-top:6px"></div>'}
+    ${editPost?"":'<label>Images (optional — max 4, up to 8MB each)</label><input type="file" id="n-file" accept="image/*" multiple><div class="flex" id="n-att" style="margin-top:6px"></div>'}
     <div class="flex" style="margin-top:12px"><button id="n-send">${editPost?"Save":"Publish"}</button><button class="secondary" id="n-cancel">Cancel</button></div>
     ${editPost?"":'<p class="muted small">An <span class="mono">Idempotency-Key</span> is generated per publish — retrying after a timeout never double-posts.</p>'}`);
   if(editPost){ $("#n-title").value=editPost.title||""; $("#n-body").value=editPost.body||""; }
-  const paintAtt=()=>{ const s=$("#n-att"); if(s) s.innerHTML=composerAttachments.map(a=>`<img class="thumb" src="${escAttr(a.thumb)}">`).join(""); };
+  const paintAtt=()=>{
+    const s=$("#n-att"); if(!s) return;
+    s.innerHTML=composerFiles.map((f,i)=>`<div class="thumb-wrap"><img class="thumb" src="${URL.createObjectURL(f)}"><button type="button" class="thumb-del" data-del-file="${i}" title="Remove">×</button></div>`).join("");
+    $$("#n-att [data-del-file]").forEach(b=>{
+      b.onclick=()=>{
+        const idx=Number(b.dataset.delFile);
+        composerFiles.splice(idx,1);
+        paintAtt();
+      };
+    });
+  };
   paintAtt();
   const fi=$("#n-file");
-  if(fi) fi.onchange=async()=>{
+  if(fi) fi.onchange=()=>{
     for(const f of fi.files){
+      if(composerFiles.length>=4){ flash("Max 4 images allowed",false); break; }
       if(f.size>8*1024*1024){ flash(f.name+": over 8MB, skipped",false); continue; }
-      const form=new FormData(); form.append("file",f,f.name);
-      try{ const u=await api("/uploads",{method:"POST",form}); composerAttachments.push({id:u.id,url:u.url,thumb:u.thumbnail_url||u.url}); paintAtt(); flash("Uploaded "+f.name); }
-      catch(e){ flashErr(e,"Upload "+f.name); }
+      composerFiles.push(f);
     }
+    paintAtt();
     fi.value="";
   };
   $("#n-cancel").onclick=closeModal;
@@ -1069,7 +1130,18 @@ function openComposer(editPost){
         flash("Post updated"); closeModal(); goPost(editPost.id);
       }else{
         const tags=($("#n-tags").value||"").split(",").map(s=>s.trim().toLowerCase().replace(/\s+/g,"-")).filter(Boolean).filter((v,i,a)=>a.indexOf(v)===i);
-        const p=await api("/posts",{method:"POST",body:{title,body,tags,attachment_ids:composerAttachments.map(a=>a.id)},idempotencyKey:uuid()});
+        const reqPayload={title,body,tags};
+        let p;
+        if(composerFiles.length>0){
+          const form=new FormData();
+          form.append("payload",new Blob([JSON.stringify(reqPayload)],{type:"application/json"}));
+          for(const f of composerFiles){
+            form.append("files",f,f.name);
+          }
+          p=await api("/posts",{method:"POST",form,idempotencyKey:uuid()});
+        }else{
+          p=await api("/posts",{method:"POST",body:reqPayload,idempotencyKey:uuid()});
+        }
         flash("Published"); closeModal(); location.hash="#/post/"+p.id;
       }
     }catch(e){ flashErr(e,"Publish"); }
